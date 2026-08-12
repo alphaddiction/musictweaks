@@ -463,223 +463,216 @@ local function inputLoop()
 
     while true do
 
-        -- Esperamos eventos del ordenador
-        local event, button, x, y =
-            os.pullEvent()
+        -- Esperamos DIRECTAMENTE un click del ratón
+        -- del ordenador.
+        local button, x, y =
+            os.pullEvent("mouse_click")
 
-        -- ===== CLICK DEL RATÓN =====
-        -- El ratón está conectado al ordenador,
-        -- por lo que el evento correcto es mouse_click.
+        -- ===== Song list =====
 
-        if event == "mouse_click" then
+        local startIdx =
+            (currentPage - 1) *
+            songsPerPage +
+            1
 
-            -- ===== Song list =====
+        for i = startIdx,
+            math.min(
+                startIdx +
+                songsPerPage -
+                1,
+                #songs
+            ) do
 
-            local startIdx =
-                (currentPage - 1) *
-                songsPerPage +
-                1
+            local row =
+                3 +
+                (i - startIdx)
 
-            for i = startIdx,
-                math.min(
-                    startIdx +
-                    songsPerPage -
-                    1,
-                    #songs
-                ) do
+            if y == row then
 
-                local row =
-                    3 +
-                    (i - startIdx)
+                currentSong =
+                    songs[i]
 
-                if y == row then
+                stopFlag = true
 
-                    currentSong =
-                        songs[i]
+                playing = true
 
-                    stopFlag = true
+                drawUI()
 
-                    playing = true
-
-                    drawUI()
-
-                    break
-
-                end
+                break
 
             end
 
-            -- ===== Buttons =====
+        end
 
-            for _, btn in ipairs(buttons) do
+        -- ===== Buttons =====
 
-                if
-                    y == btn.y
+        for _, btn in ipairs(buttons) do
+
+            if
+                y == btn.y
+                and
+                x >= btn.x1
+                and
+                x <= btn.x2
+            then
+
+                -- Shuffle
+
+                if btn.text:find("Shuffle") then
+
+                    shuffle = not shuffle
+
+                -- Loop
+
+                elseif btn.text:find("Loop") then
+
+                    loopMode =
+                        (loopMode + 1) % 3
+
+                -- Previous page
+
+                elseif
+                    btn.text:find("Prev")
                     and
-                    x >= btn.x1
-                    and
-                    x <= btn.x2
+                    currentPage > 1
                 then
 
-                    -- Shuffle
+                    currentPage =
+                        currentPage - 1
 
-                    if btn.text:find("Shuffle") then
+                -- Next page
 
-                        shuffle = not shuffle
+                elseif
+                    btn.text:find("Next")
+                    and
+                    currentPage < totalPages()
+                then
 
-                    -- Loop
+                    currentPage =
+                        currentPage + 1
 
-                    elseif btn.text:find("Loop") then
+                -- Play / Stop
 
-                        loopMode =
-                            (loopMode + 1) % 3
+                elseif
+                    btn.text:find("Stopped")
+                    or
+                    btn.text:find("Playing")
+                then
 
-                    -- Previous page
+                    if playing then
 
-                    elseif
-                        btn.text:find("Prev")
-                        and
-                        currentPage > 1
-                    then
+                        stopFlag = true
 
-                        currentPage =
-                            currentPage - 1
+                        playing = false
 
-                    -- Next page
-
-                    elseif
-                        btn.text:find("Next")
-                        and
-                        currentPage < totalPages()
-                    then
-
-                        currentPage =
-                            currentPage + 1
-
-                    -- Play / Stop
-
-                    elseif
-                        btn.text:find("Stopped")
-                        or
-                        btn.text:find("Playing")
-                    then
-
-                        if playing then
-
-                            stopFlag = true
-
-                            playing = false
-
-                        else
-
-                            if currentSong then
-                                playing = true
-                            end
-
-                        end
-
-                    -- Skip
-
-                    elseif btn.text:find("Skip") then
+                    else
 
                         if currentSong then
-
-                            local idx = 1
-
-                            for i, s in ipairs(songs) do
-
-                                if s == currentSong then
-                                    idx = i
-                                    break
-                                end
-
-                            end
-
-                            if shuffle then
-
-                                currentSong =
-                                    songs[
-                                        math.random(#songs)
-                                    ]
-
-                            elseif idx < #songs then
-
-                                currentSong =
-                                    songs[idx + 1]
-
-                            else
-
-                                currentSong =
-                                    songs[1]
-
-                            end
-
-                            stopFlag = true
-
                             playing = true
-
                         end
-
-                    -- Volume down
-
-                    elseif btn.text == "-" then
-
-                        volume =
-                            math.max(
-                                0,
-                                volume - 0.05
-                            )
-
-                    -- Volume up
-
-                    elseif btn.text == "+" then
-
-                        volume =
-                            math.min(
-                                1,
-                                volume + 0.05
-                            )
 
                     end
 
-                    drawUI()
+                -- Skip
 
-                    break
+                elseif btn.text:find("Skip") then
+
+                    if currentSong then
+
+                        local idx = 1
+
+                        for i, s in ipairs(songs) do
+
+                            if s == currentSong then
+                                idx = i
+                                break
+                            end
+
+                        end
+
+                        if shuffle then
+
+                            currentSong =
+                                songs[
+                                    math.random(#songs)
+                                ]
+
+                        elseif idx < #songs then
+
+                            currentSong =
+                                songs[idx + 1]
+
+                        else
+
+                            currentSong =
+                                songs[1]
+
+                        end
+
+                        stopFlag = true
+
+                        playing = true
+
+                    end
+
+                -- Volume down
+
+                elseif btn.text == "-" then
+
+                    volume =
+                        math.max(
+                            0,
+                            volume - 0.05
+                        )
+
+                -- Volume up
+
+                elseif btn.text == "+" then
+
+                    volume =
+                        math.min(
+                            1,
+                            volume + 0.05
+                        )
 
                 end
 
+                drawUI()
+
+                break
+
             end
 
-            -- ===== Save settings =====
-
-            settings.set(
-                "currentPage",
-                currentPage
-            )
-
-            settings.set(
-                "loopMode",
-                loopMode
-            )
-
-            settings.set(
-                "shuffle",
-                shuffle
-            )
-
-            settings.set(
-                "currentSong",
-                currentSong and currentSong.name
-            )
-
-            settings.set(
-                "playing",
-                playing
-            )
-
-            settings.save()
-
         end
+
+        -- ===== Save settings =====
+
+        settings.set(
+            "currentPage",
+            currentPage
+        )
+
+        settings.set(
+            "loopMode",
+            loopMode
+        )
+
+        settings.set(
+            "shuffle",
+            shuffle
+        )
+
+        settings.set(
+            "currentSong",
+            currentSong and currentSong.name
+        )
+
+        settings.set(
+            "playing",
+            playing
+        )
+
+        settings.save()
 
     end
 
