@@ -1,97 +1,62 @@
 -- ============================================================
 -- MUSIC TWEAKS - RECEIVER
+-- VERSION CORREGIDA
 -- ============================================================
 
-local REPO =
-    "alphaddiction/musictweaks"
+local REPO = "alphaddiction/musictweaks"
+local BRANCH = "main"
+local PROTOCOL = "musictweaks"
 
-local PROTOCOL =
-    "musictweaks"
-
+local dfpwm = require("cc.audio.dfpwm")
 
 -- ============================================================
 -- MODEM
 -- ============================================================
 
-local modem =
-    peripheral.find(
-        "modem",
-        function(name, wrapped)
-            return wrapped.isWireless()
-        end
-    )
+local modem = peripheral.find("modem", function(name, wrapped)
+    return wrapped.isWireless()
+end)
 
 if not modem then
-    error(
-        "No se encontro un modem inalambrico."
-    )
+    error("No se encontro un modem inalambrico.")
 end
 
-rednet.open(
-    peripheral.getName(
-        modem
-    )
-)
-
+rednet.open(peripheral.getName(modem))
 
 -- ============================================================
--- SPEAKER
+-- SPEAKERS
 -- ============================================================
 
 local speakers = {
-    peripheral.find(
-        "speaker"
-    )
+    peripheral.find("speaker")
 }
 
 if #speakers == 0 then
-    error(
-        "No se encontro ningun speaker."
-    )
+    error("No se encontro ningun speaker.")
 end
-
 
 -- ============================================================
 -- ZONA
 -- ============================================================
 
-local zoneName =
-    settings.get(
-        "musictweaks.zoneName"
-    )
+local zoneName = settings.get("musictweaks.zoneName")
 
 if not zoneName then
 
     term.clear()
+    term.setCursorPos(1, 1)
 
-    term.setCursorPos(
-        1,
-        1
-    )
-
-    print(
-        "MUSIC TWEAKS RECEIVER"
-    )
-
+    print("MUSIC TWEAKS RECEIVER")
     print("")
-    print(
-        "Nombre de esta zona:"
-    )
-
-    print(
-        "Ejemplo: SALON"
-    )
-
+    print("Nombre de esta zona:")
+    print("Ejemplo: SALON")
     print("")
-
     write("> ")
 
-    zoneName =
-        read()
+    zoneName = read()
 
     if zoneName == "" then
-        zoneName =
-            "RECEIVER"
+        zoneName = "RECEIVER"
     end
 
     settings.set(
@@ -102,227 +67,221 @@ if not zoneName then
     settings.save()
 end
 
-
 -- ============================================================
--- STATE
+-- ESTADO
 -- ============================================================
 
 local centralId = nil
-
 local connected = false
 
 local currentSong = nil
 
 local playing = false
-
 local paused = false
 
 local volume = 0.35
 
-local stopRequested = false
-
+local playbackId = 0
 local playRequest = nil
 
-local playGeneration = 0
-
+local status = "Iniciando..."
 
 -- ============================================================
--- SCREEN
+-- PANTALLA
 -- ============================================================
 
-local function drawUI(
-    status
-)
+local function drawUI()
 
-    term.setBackgroundColor(
-        colors.black
-    )
-
-    term.setTextColor(
-        colors.white
-    )
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
 
     term.clear()
+    term.setCursorPos(1, 1)
 
-    term.setCursorPos(
-        1,
-        1
-    )
+    term.setTextColor(colors.cyan)
 
-    term.setTextColor(
-        colors.cyan
-    )
+    print("================================")
+    print("        MUSIC TWEAKS")
+    print("        AUDIO RECEIVER")
+    print("================================")
 
-    print(
-        "================================"
-    )
-
-    print(
-        "       MUSIC TWEAKS"
-    )
-
-    print(
-        "        AUDIO RECEIVER"
-    )
-
-    print(
-        "================================"
-    )
-
-    term.setTextColor(
-        colors.white
-    )
+    term.setTextColor(colors.white)
 
     print("")
-
-    print(
-        "ZONE: "
-        .. zoneName
-    )
-
-    print(
-        "ID: "
-        .. os.getComputerID()
-    )
-
+    print("ZONE: " .. zoneName)
+    print("ID:   " .. os.getComputerID())
     print("")
 
     if connected then
-
-        term.setTextColor(
-            colors.lime
-        )
-
-        print(
-            "● CONNECTED"
-        )
-
+        term.setTextColor(colors.lime)
+        print("● CONNECTED")
     else
-
-        term.setTextColor(
-            colors.red
-        )
-
-        print(
-            "● WAITING FOR CENTRAL"
-        )
+        term.setTextColor(colors.red)
+        print("● WAITING FOR CENTRAL")
     end
 
-    term.setTextColor(
-        colors.white
-    )
+    term.setTextColor(colors.white)
 
     print("")
 
     print(
         "SONG: "
-        .. (
-            currentSong
-            or "---"
-        )
+        .. (currentSong or "---")
     )
 
     if playing then
 
-        term.setTextColor(
-            colors.lime
-        )
-
-        print(
-            "● PLAYING"
-        )
+        term.setTextColor(colors.lime)
+        print("● PLAYING")
 
     elseif paused then
 
-        term.setTextColor(
-            colors.yellow
-        )
-
-        print(
-            "● PAUSED"
-        )
+        term.setTextColor(colors.yellow)
+        print("● PAUSED")
 
     else
 
-        term.setTextColor(
-            colors.lightGray
-        )
+        term.setTextColor(colors.lightGray)
+        print("● STOPPED")
 
-        print(
-            "● STOPPED"
-        )
     end
 
-    term.setTextColor(
-        colors.white
-    )
+    term.setTextColor(colors.white)
 
     print("")
 
     print(
         "VOLUME: "
-        .. math.floor(
-            volume * 100
-        )
+        .. math.floor(volume * 100)
         .. "%"
     )
 
-    if status then
-
-        print("")
-        print(status)
-
-    end
+    print("")
+    print(status)
 end
 
+-- ============================================================
+-- ESTADO SIN REDIBUJAR
+-- ============================================================
+
+local function setStatus(text)
+
+    status = text
+
+    drawUI()
+end
 
 -- ============================================================
--- STOP
+-- STOP SPEAKERS
 -- ============================================================
 
 local function stopSpeakers()
 
-    for _, speaker
-        in ipairs(speakers)
-    do
+    for _, speaker in ipairs(speakers) do
 
-        pcall(
-            function()
-                speaker.stop()
-            end
-        )
+        pcall(function()
+            speaker.stop()
+        end)
+
     end
 end
 
+-- ============================================================
+-- URL ENCODE
+--
+-- Esto es importante para:
+-- espacios
+-- emojis
+-- acentos
+-- parentesis
+-- caracteres especiales
+-- ============================================================
+
+local function urlEncodePath(text)
+
+    local result = {}
+
+    for i = 1, #text do
+
+        local byte = string.byte(text, i)
+
+        -- Caracteres URL seguros
+        if
+            (byte >= 48 and byte <= 57)
+            or
+            (byte >= 65 and byte <= 90)
+            or
+            (byte >= 97 and byte <= 122)
+            or
+            byte == 45
+            or
+            byte == 46
+            or
+            byte == 95
+            or
+            byte == 126
+        then
+
+            table.insert(
+                result,
+                string.char(byte)
+            )
+
+        else
+
+            table.insert(
+                result,
+                string.format(
+                    "%%%02X",
+                    byte
+                )
+            )
+
+        end
+    end
+
+    return table.concat(result)
+end
 
 -- ============================================================
--- DOWNLOAD SONG
+-- URL DE LA CANCION
 -- ============================================================
 
-local function downloadSong(
-    songName
-)
+local function getSongURL(songName)
 
-    local encoded =
-        songName:gsub(
-            " ",
-            "%%20"
-        )
-
-    local url =
+    return
         "https://raw.githubusercontent.com/"
         .. REPO
-        .. "/refs/heads/main/"
-        .. encoded
+        .. "/refs/heads/"
+        .. BRANCH
+        .. "/"
+        .. urlEncodePath(songName)
         .. ".dfpwm"
 
-    local response =
+end
+
+-- ============================================================
+-- DESCARGAR
+-- ============================================================
+
+local function downloadSong(songName)
+
+    local url =
+        getSongURL(songName)
+
+    setStatus(
+        "Descargando..."
+    )
+
+    local response, err =
         http.get(url)
 
     if not response then
 
         return nil,
-            "No se pudo descargar "
+            "ERROR DESCARGA\n"
+            .. tostring(err)
+            .. "\n\n"
             .. songName
 
     end
@@ -332,185 +291,217 @@ local function downloadSong(
 
     response.close()
 
+    if not data or #data == 0 then
+
+        return nil,
+            "ARCHIVO VACIO\n"
+            .. songName
+
+    end
+
     return data
 end
 
-
 -- ============================================================
--- PLAY SONG
+-- REPRODUCCION
 -- ============================================================
 
 local function playSong(
     songName,
-    generation
+    myPlaybackId
 )
 
     local data, err =
-        downloadSong(
-            songName
-        )
+        downloadSong(songName)
 
     if not data then
 
-        drawUI(err)
-
         playing = false
+        paused = false
+
+        setStatus(err)
 
         return
     end
 
-    -- Si mientras descargaba se pidió otra canción,
-    -- cancelamos esta reproducción.
-
-    if generation
-        ~= playGeneration
-    then
-
+    -- Si ya se pidio otra cancion
+    if myPlaybackId ~= playbackId then
         return
     end
+
+    setStatus(
+        "Preparando audio..."
+    )
 
     local decoder =
-        require(
-            "cc.audio.dfpwm"
-        ).make_decoder()
-
-
-    local position = 1
+        dfpwm.make_decoder()
 
     local chunkSize =
         16 * 1024
 
+    local position = 1
+
+    playing = true
+    paused = false
+
+    setStatus(
+        "Reproduciendo"
+    )
 
     while position <= #data do
 
-        if
-            generation
-            ~= playGeneration
-        then
-
+        -- Cancelado
+        if myPlaybackId ~= playbackId then
+            stopSpeakers()
             return
         end
 
-        if stopRequested then
+        -- PAUSA
+        while paused do
 
-            return
+            if myPlaybackId ~= playbackId then
+                stopSpeakers()
+                return
+            end
+
+            os.sleep(0.1)
         end
 
         if not playing then
+            stopSpeakers()
+            return
+        end
 
-            os.sleep(
-                0.05
+        local chunk =
+            data:sub(
+                position,
+                math.min(
+                    position + chunkSize - 1,
+                    #data
+                )
             )
 
-        else
+        local audio =
+            decoder(chunk)
 
-            local chunk =
-                data:sub(
-                    position,
-                    math.min(
-                        position
-                        + chunkSize
-                        - 1,
-                        #data
-                    )
-                )
+        -- ====================================================
+        -- ENVIAR AUDIO A TODOS LOS SPEAKERS
+        -- ====================================================
 
-            local buffer =
-                decoder(
-                    chunk
-                )
+        local pending = {}
 
+        for _, speaker in ipairs(speakers) do
 
-            local pending = {}
+            local name =
+                peripheral.getName(speaker)
 
-
-            for _, speaker
-                in ipairs(speakers)
-            do
-
-                if not speaker.playAudio(
-                    buffer,
+            local ok =
+                speaker.playAudio(
+                    audio,
                     volume
                 )
-                then
 
-                    pending[
-                        peripheral.getName(
-                            speaker
-                        )
-                    ] =
-                        speaker
+            if not ok then
+
+                pending[name] =
+                    speaker
+
+            end
+        end
+
+        -- ====================================================
+        -- ESPERAR SOLO SI EL SPEAKER ESTA LLENO
+        -- ====================================================
+
+        while next(pending) do
+
+            if myPlaybackId ~= playbackId then
+
+                stopSpeakers()
+                return
+
+            end
+
+            while paused do
+
+                os.sleep(0.05)
+
+                if myPlaybackId ~= playbackId then
+                    stopSpeakers()
+                    return
                 end
             end
 
+            if not playing then
 
-            while next(pending) do
+                stopSpeakers()
+                return
 
-                if
-                    generation
-                    ~= playGeneration
-                    or stopRequested
-                then
+            end
 
-                    stopSpeakers()
+            local event, name =
+                os.pullEvent()
 
-                    return
-                end
+            if event ==
+                "speaker_audio_empty"
+            then
 
+                local speaker =
+                    pending[name]
 
-                local event,
-                    name =
-                    os.pullEvent()
+                if speaker then
 
-
-                if
-                    event
-                    == "speaker_audio_empty"
-                then
-
-                    local speaker =
-                        pending[name]
-
-                    if speaker
-                        and speaker.playAudio(
-                            buffer,
+                    local ok =
+                        speaker.playAudio(
+                            audio,
                             volume
                         )
-                    then
 
-                        pending[name] =
-                            nil
+                    if ok then
+                        pending[name] = nil
                     end
                 end
             end
-
-
-            position =
-                position
-                + #chunk
         end
+
+        position =
+            position + #chunk
     end
 
-
     -- ========================================================
-    -- SONG FINISHED
+    -- FIN
     -- ========================================================
 
-    if generation
-        == playGeneration
-        and not stopRequested
+    if myPlaybackId ==
+        playbackId
     then
 
         playing = false
         paused = false
 
-        drawUI(
-            "FINISHED"
+        setStatus(
+            "Cancion terminada"
         )
 
+        if centralId then
+
+            rednet.send(
+                centralId,
+                {
+                    type =
+                        "SONG_FINISHED",
+
+                    song =
+                        songName,
+
+                    zone =
+                        zoneName
+                },
+                PROTOCOL
+            )
+        end
     end
 end
-
 
 -- ============================================================
 -- PLAYBACK MANAGER
@@ -525,39 +516,20 @@ local function playbackLoop()
             local request =
                 playRequest
 
-            playRequest =
-                nil
-
-            stopRequested =
-                false
-
-            playing =
-                true
-
-            paused =
-                false
-
-            currentSong =
-                request.song
-
-            drawUI(
-                "DOWNLOADING..."
-            )
+            playRequest = nil
 
             playSong(
                 request.song,
-                request.generation
+                request.id
             )
 
         else
 
-            os.sleep(
-                0.05
-            )
+            os.sleep(0.05)
+
         end
     end
 end
-
 
 -- ============================================================
 -- NETWORK
@@ -567,37 +539,32 @@ local function networkLoop()
 
     while true do
 
-        local sender,
-            message =
+        local sender, message =
             rednet.receive(
                 PROTOCOL
             )
 
         if
             sender
-            and type(message)
-            == "table"
+            and type(message) == "table"
         then
 
             -- ==================================================
-            -- CENTRAL
+            -- CENTRAL HELLO
             -- ==================================================
 
             if
-                message.type
-                == "CENTRAL_HELLO"
+                message.type ==
+                "CENTRAL_HELLO"
             then
 
                 centralId =
                     sender
 
-                connected =
-                    true
+                connected = true
 
                 rednet.send(
-
                     centralId,
-
                     {
                         type =
                             "RECEIVER_HELLO",
@@ -608,34 +575,29 @@ local function networkLoop()
                         speakers =
                             #speakers
                     },
-
                     PROTOCOL
                 )
 
-                drawUI(
-                    "CONNECTED"
+                setStatus(
+                    "Conectado"
                 )
-
 
             -- ==================================================
             -- PING
             -- ==================================================
 
             elseif
-                message.type
-                == "PING"
+                message.type ==
+                "PING"
             then
 
                 centralId =
                     sender
 
-                connected =
-                    true
+                connected = true
 
                 rednet.send(
-
                     centralId,
-
                     {
                         type =
                             "PONG",
@@ -646,36 +608,29 @@ local function networkLoop()
                         speakers =
                             #speakers
                     },
-
                     PROTOCOL
                 )
-
 
             -- ==================================================
             -- PLAY
             -- ==================================================
 
             elseif
-                message.type
-                == "PLAY"
+                message.type ==
+                "PLAY"
             then
 
                 centralId =
                     sender
 
-                connected =
-                    true
-
+                connected = true
 
                 if message.song then
 
-                    playGeneration =
-                        playGeneration
-                        + 1
+                    playbackId =
+                        playbackId + 1
 
-                    stopRequested =
-                        true
-
+                    -- Detener inmediatamente
                     stopSpeakers()
 
                     currentSong =
@@ -685,88 +640,69 @@ local function networkLoop()
                         message.volume
                         or volume
 
+                    playing = true
+                    paused = false
 
                     playRequest =
                         {
                             song =
                                 message.song,
 
-                            generation =
-                                playGeneration
+                            id =
+                                playbackId
                         }
 
-                    playing =
-                        true
-
-                    paused =
-                        false
-
-
-                    drawUI(
-                        "LOADING..."
+                    setStatus(
+                        "Cargando..."
                     )
                 end
-
 
             -- ==================================================
             -- PAUSE
             -- ==================================================
 
             elseif
-                message.type
-                == "PAUSE"
+                message.type ==
+                "PAUSE"
             then
 
-                playing =
-                    false
+                paused = true
+                playing = true
 
-                paused =
-                    true
-
-                drawUI(
-                    "PAUSED"
+                setStatus(
+                    "Pausado"
                 )
-
 
             -- ==================================================
             -- STOP
             -- ==================================================
 
             elseif
-                message.type
-                == "STOP"
+                message.type ==
+                "STOP"
             then
 
-                playGeneration =
-                    playGeneration
-                    + 1
+                playbackId =
+                    playbackId + 1
 
-                stopRequested =
-                    true
+                playRequest = nil
 
-                playRequest =
-                    nil
-
-                playing =
-                    false
-
-                paused =
-                    false
+                playing = false
+                paused = false
 
                 stopSpeakers()
 
-                drawUI(
-                    "STOPPED"
+                setStatus(
+                    "Detenido"
                 )
-
 
             -- ==================================================
             -- VOLUME
             -- ==================================================
 
             elseif
-                message.type
-                == "VOLUME"
+                message.type ==
+                "VOLUME"
             then
 
                 volume =
@@ -774,19 +710,24 @@ local function networkLoop()
                         0,
                         math.min(
                             1,
-                            message.volume
+                            tonumber(
+                                message.volume
+                            )
                             or volume
                         )
                     )
 
-                drawUI(
-                    "VOLUME"
+                setStatus(
+                    "Volumen "
+                    .. math.floor(
+                        volume * 100
+                    )
+                    .. "%"
                 )
             end
         end
     end
 end
-
 
 -- ============================================================
 -- CONNECTION
@@ -799,9 +740,7 @@ local function connectionLoop()
         if centralId then
 
             rednet.send(
-
                 centralId,
-
                 {
                     type =
                         "PONG",
@@ -812,14 +751,12 @@ local function connectionLoop()
                     speakers =
                         #speakers
                 },
-
                 PROTOCOL
             )
 
         else
 
             rednet.broadcast(
-
                 {
                     type =
                         "HELLO",
@@ -830,7 +767,6 @@ local function connectionLoop()
                     speakers =
                         #speakers
                 },
-
                 PROTOCOL
             )
         end
@@ -839,19 +775,14 @@ local function connectionLoop()
     end
 end
 
-
 -- ============================================================
 -- START
 -- ============================================================
 
-drawUI(
-    "STARTING"
-)
+drawUI()
 
 parallel.waitForAny(
-
     networkLoop,
     playbackLoop,
     connectionLoop
-
 )
