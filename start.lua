@@ -1,306 +1,159 @@
 -- ============================================================
--- MUSIC TWEAKS
--- CENTRAL + NETWORK AUDIO
+-- MUSIC TWEAKS - CENTRAL
 -- ============================================================
 
 local REPO = "alphaddiction/musictweaks"
-
 local PROTOCOL = "musictweaks"
 
--- Tamaño de cada paquete DFPWM enviado por red.
--- 4096 es deliberadamente pequeño para mejorar compatibilidad
--- con modems y evitar paquetes demasiado grandes.
-local AUDIO_CHUNK = 4096
+local modem = peripheral.find("modem", function(name, wrapped)
+    return wrapped.isWireless()
+end)
 
+if not modem then
+    error("No se encontro un modem inalambrico.")
+end
+
+rednet.open(peripheral.getName(modem))
 
 -- ============================================================
 -- TERMINAL
 -- ============================================================
 
+local WIDTH, HEIGHT = term.getSize()
+
 term.setBackgroundColor(colors.black)
 term.setTextColor(colors.white)
 term.clear()
 
-local WIDTH, HEIGHT = term.getSize()
-
-
 -- ============================================================
--- WIRELESS MODEM
+-- CANCIONES
 -- ============================================================
 
-local modem = peripheral.find(
-    "modem",
-    function(name, wrapped)
-        return wrapped.isWireless()
+local function loadSongs()
+
+    local url =
+        "https://raw.githubusercontent.com/"
+        .. REPO
+        .. "/refs/heads/main/index.txt"
+
+    local response = http.get(url)
+
+    if not response then
+        error("No se pudo descargar index.txt")
     end
-)
 
-if not modem then
-    error(
-        "No se encontro un modem inalambrico."
-    )
+    local data = response.readAll()
+    response.close()
+
+    local names = textutils.unserialize(data)
+
+    if not names then
+        error("index.txt no tiene un formato valido")
+    end
+
+    local result = {}
+
+    for _, name in ipairs(names) do
+        table.insert(result, {
+            name = name
+        })
+    end
+
+    return result
 end
 
-local modemName =
-    peripheral.getName(modem)
-
-rednet.open(modemName)
-
-
--- ============================================================
--- DFPWM
--- ============================================================
-
-local dfpwm =
-    require("cc.audio.dfpwm")
-
-
--- ============================================================
--- SONG INDEX
--- ============================================================
-
-local indexURL =
-    "https://raw.githubusercontent.com/"
-    .. REPO
-    .. "/refs/heads/main/index.txt"
-
-
-local response =
-    http.get(indexURL)
-
-
-if not response then
-    error(
-        "No se pudo descargar index.txt"
-    )
-end
-
-
-local indexData =
-    response.readAll()
-
-response.close()
-
-
-local songNames =
-    textutils.unserialize(indexData)
-
-
-if not songNames then
-    error(
-        "index.txt no tiene un formato valido"
-    )
-end
-
-
-local songs = {}
-
-
-for _, name in ipairs(songNames) do
-
-    table.insert(
-        songs,
-        {
-            name = name,
-
-            fn = function()
-
-                local encoded =
-                    name:gsub(
-                        " ",
-                        "%%20"
-                    )
-
-                local url =
-                    "https://raw.githubusercontent.com/"
-                    .. REPO
-                    .. "/refs/heads/main/"
-                    .. encoded
-                    .. ".dfpwm"
-
-
-                local r =
-                    http.get(url)
-
-
-                if not r then
-                    error(
-                        "No se pudo descargar "
-                        .. name
-                        .. ".dfpwm"
-                    )
-                end
-
-
-                local data =
-                    r.readAll()
-
-                r.close()
-
-                return data
-
-            end
-        }
-    )
-
-end
-
+local songs = loadSongs()
 
 if #songs == 0 then
-    error(
-        "No hay canciones en index.txt"
-    )
+    error("No hay canciones.")
 end
 
-
 -- ============================================================
--- SETTINGS
+-- AJUSTES
 -- ============================================================
 
 local currentSong = nil
 
-local savedName =
-    settings.get(
-        "currentSong",
-        nil
-    )
+local savedSong =
+    settings.get("currentSong")
 
-
-if savedName then
-
+if savedSong then
     for _, song in ipairs(songs) do
-
-        if song.name == savedName then
+        if song.name == savedSong then
             currentSong = song
             break
         end
-
     end
-
 end
 
-
 local playing =
-    settings.get(
-        "playing",
-        false
-    )
-
+    settings.get("playing", false)
 
 local shuffle =
-    settings.get(
-        "shuffle",
-        true
-    )
-
+    settings.get("shuffle", true)
 
 local loopMode =
-    settings.get(
-        "loopMode",
-        0
-    )
-
+    settings.get("loopMode", 0)
 
 local volume =
-    settings.get(
-        "volume",
-        0.35
-    )
-
+    settings.get("volume", 0.35)
 
 local currentPage =
-    settings.get(
-        "currentPage",
-        1
-    )
-
+    settings.get("currentPage", 1)
 
 -- ============================================================
--- PLAYBACK CONTROL
--- ============================================================
-
-local playbackToken = 0
-
-local stopRequested = false
-
-
--- ============================================================
--- NETWORK ZONES
+-- ZONAS
 -- ============================================================
 
 local zones = {}
-
 
 -- ============================================================
 -- UI
 -- ============================================================
 
 local buttons = {}
-
 local uiDirty = true
-
-
-local function markUI()
-    uiDirty = true
-end
-
-
--- ============================================================
--- PAGES
--- ============================================================
 
 local TOP_ROWS = 8
 local BOTTOM_ROWS = 6
 
-
 local songsPerPage =
-    HEIGHT
-    - TOP_ROWS
-    - BOTTOM_ROWS
-
-
-if songsPerPage < 1 then
-    songsPerPage = 1
-end
-
+    math.max(
+        1,
+        HEIGHT - TOP_ROWS - BOTTOM_ROWS
+    )
 
 local function totalPages()
-
     return math.max(
         1,
         math.ceil(
-            #songs /
-            songsPerPage
+            #songs / songsPerPage
+        )
+    )
+end
+
+currentPage =
+    math.max(
+        1,
+        math.min(
+            currentPage,
+            totalPages()
         )
     )
 
+local function refreshUI()
+    uiDirty = true
 end
-
-
-if currentPage < 1 then
-    currentPage = 1
-end
-
-
-if currentPage > totalPages() then
-    currentPage = totalPages()
-end
-
 
 -- ============================================================
--- SAVE
+-- GUARDAR
 -- ============================================================
 
 local function saveSettings()
 
     settings.set(
-        "currentPage",
-        currentPage
-    )
-
-    settings.set(
-        "loopMode",
-        loopMode
+        "playing",
+        playing
     )
 
     settings.set(
@@ -309,8 +162,8 @@ local function saveSettings()
     )
 
     settings.set(
-        "playing",
-        playing
+        "loopMode",
+        loopMode
     )
 
     settings.set(
@@ -318,30 +171,27 @@ local function saveSettings()
         volume
     )
 
+    settings.set(
+        "currentPage",
+        currentPage
+    )
 
     if currentSong then
-
         settings.set(
             "currentSong",
             currentSong.name
         )
-
     else
-
         settings.unset(
             "currentSong"
         )
-
     end
 
-
     settings.save()
-
 end
 
-
 -- ============================================================
--- BUTTON
+-- BOTONES
 -- ============================================================
 
 local function addButton(
@@ -349,237 +199,119 @@ local function addButton(
     y,
     text,
     action,
-    background,
-    foreground
+    bg,
+    fg
 )
 
-    background =
-        background
-        or colors.gray
+    bg = bg or colors.gray
+    fg = fg or colors.white
 
-    foreground =
-        foreground
-        or colors.white
-
-
-    local output =
+    local value =
         "[ "
         .. text
         .. " ]"
 
-
-    term.setCursorPos(
-        x,
-        y
-    )
-
-    term.setBackgroundColor(
-        background
-    )
-
-    term.setTextColor(
-        foreground
-    )
-
-    term.write(
-        output
-    )
-
+    term.setCursorPos(x, y)
+    term.setBackgroundColor(bg)
+    term.setTextColor(fg)
+    term.write(value)
 
     table.insert(
         buttons,
         {
             x1 = x,
-            x2 = x + #output - 1,
+            x2 = x + #value - 1,
             y1 = y,
             y2 = y,
             action = action
         }
     )
-
 end
 
-
 -- ============================================================
--- DRAW UI
+-- INTERFAZ
 -- ============================================================
 
 local function drawUI()
 
     buttons = {}
 
-
-    term.setBackgroundColor(
-        colors.black
-    )
-
-    term.setTextColor(
-        colors.white
-    )
-
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
     term.clear()
 
-
-    -- ========================================================
     -- HEADER
-    -- ========================================================
 
-    term.setBackgroundColor(
-        colors.blue
-    )
+    term.setBackgroundColor(colors.blue)
 
-    term.setCursorPos(
-        1,
-        1
-    )
+    term.setCursorPos(1, 1)
 
     term.write(
-        string.rep(
-            " ",
-            WIDTH
-        )
+        string.rep(" ", WIDTH)
     )
-
 
     local title =
         " MUSIC TWEAKS - CENTRAL "
 
-
-    local titleX =
+    term.setCursorPos(
         math.max(
             1,
             math.floor(
-                (
-                    WIDTH
-                    - #title
-                ) / 2
+                (WIDTH - #title) / 2
             )
-        )
-
-
-    term.setCursorPos(
-        titleX,
+        ),
         1
     )
 
-    term.setTextColor(
-        colors.white
-    )
+    term.setTextColor(colors.white)
+    term.write(title)
 
-    term.write(
-        title
-    )
+    term.setBackgroundColor(colors.black)
 
-
-    -- ========================================================
     -- NOW PLAYING
-    -- ========================================================
 
-    term.setBackgroundColor(
-        colors.black
-    )
+    term.setCursorPos(2, 2)
+    term.setTextColor(colors.cyan)
+    term.write("NOW PLAYING")
 
-    term.setCursorPos(
-        2,
-        2
-    )
+    term.setCursorPos(2, 3)
+    term.setTextColor(colors.white)
 
-    term.setTextColor(
-        colors.cyan
-    )
-
-    term.write(
-        "NOW PLAYING"
-    )
-
-
-    term.setCursorPos(
-        2,
-        3
-    )
-
-    term.setTextColor(
-        colors.white
-    )
-
-
-    local titleText =
+    local songName =
         currentSong
         and currentSong.name
-        or "(none)"
+        or "(ninguna)"
 
-
-    if #titleText >
-        WIDTH - 2
-    then
-
-        titleText =
-            titleText:sub(
+    if #songName > WIDTH - 2 then
+        songName =
+            songName:sub(
                 1,
                 WIDTH - 5
             )
             .. "..."
-
     end
 
+    term.write(songName)
 
-    term.write(
-        titleText
-    )
-
-
-    term.setCursorPos(
-        2,
-        4
-    )
-
+    term.setCursorPos(2, 4)
 
     if playing then
-
-        term.setTextColor(
-            colors.lime
-        )
-
-        term.write(
-            "● PLAYING"
-        )
-
+        term.setTextColor(colors.lime)
+        term.write("● PLAYING")
     else
-
-        term.setTextColor(
-            colors.lightGray
-        )
-
-        term.write(
-            "● STOPPED"
-        )
-
+        term.setTextColor(colors.lightGray)
+        term.write("● STOPPED")
     end
 
+    -- ZONAS
 
-    -- ========================================================
-    -- ZONES
-    -- ========================================================
-
-    term.setCursorPos(
-        2,
-        5
-    )
-
-    term.setTextColor(
-        colors.cyan
-    )
-
-    term.write(
-        "ZONES"
-    )
-
+    term.setCursorPos(2, 5)
+    term.setTextColor(colors.cyan)
+    term.write("ZONES")
 
     local zoneList = {}
 
-
     for id, zone in pairs(zones) do
-
         table.insert(
             zoneList,
             {
@@ -587,9 +319,7 @@ local function drawUI()
                 zone = zone
             }
         )
-
     end
-
 
     table.sort(
         zoneList,
@@ -598,128 +328,86 @@ local function drawUI()
         end
     )
 
-
     local zoneY = 6
-
 
     for _, item in ipairs(zoneList) do
 
         if zoneY <= TOP_ROWS then
-
-            local zone =
-                item.zone
-
 
             term.setCursorPos(
                 2,
                 zoneY
             )
 
-            term.setTextColor(
-                colors.lime
-            )
+            term.setTextColor(colors.lime)
+            term.write("● ")
 
-            term.write(
-                "● "
-            )
+            term.setTextColor(colors.white)
 
-
-            term.setTextColor(
-                colors.white
-            )
-
-
-            local zoneName =
-                zone.name
-                or "ZONE"
-
-
-            local line =
-                zoneName
+            local text =
+                (
+                    item.zone.name
+                    or "ZONE"
+                )
                 .. "  ID:"
                 .. item.id
                 .. "  SPK:"
                 .. (
-                    zone.speakers
+                    item.zone.speakers
                     or 0
                 )
 
-
-            if #line >
-                WIDTH - 3
-            then
-
-                line =
-                    line:sub(
+            if #text > WIDTH - 3 then
+                text =
+                    text:sub(
                         1,
                         WIDTH - 3
                     )
-
             end
 
-
-            term.write(
-                line
-            )
-
+            term.write(text)
 
             zoneY =
                 zoneY + 1
-
         end
-
     end
 
-
-    -- ========================================================
     -- PLAYLIST
-    -- ========================================================
 
     local playlistY =
         TOP_ROWS + 1
-
 
     term.setCursorPos(
         2,
         playlistY
     )
 
-    term.setTextColor(
-        colors.cyan
-    )
+    term.setTextColor(colors.cyan)
+    term.write("PLAYLIST")
 
-    term.write(
-        "PLAYLIST"
-    )
+    local firstSongY =
+        playlistY + 1
 
-
-    local start =
+    local startIndex =
         (
             currentPage - 1
         )
         * songsPerPage
         + 1
 
-
-    local firstSongY =
-        playlistY + 1
-
-
-    local lastSong =
+    local endIndex =
         math.min(
-            start
+            startIndex
             + songsPerPage
             - 1,
             #songs
         )
 
-
     local y =
         firstSongY
 
-
-    for i = start,
-        lastSong
+    for i = startIndex,
+        endIndex
     do
 
         if y >
@@ -728,12 +416,10 @@ local function drawUI()
             break
         end
 
-
         term.setCursorPos(
             2,
             y
         )
-
 
         if currentSong ==
             songs[i]
@@ -743,9 +429,7 @@ local function drawUI()
                 colors.yellow
             )
 
-            term.write(
-                "> "
-            )
+            term.write("> ")
 
         else
 
@@ -753,19 +437,15 @@ local function drawUI()
                 colors.lightGray
             )
 
-            term.write(
-                "  "
-            )
+            term.write("  ")
 
         end
-
 
         term.setTextColor(
             colors.white
         )
 
-
-        local songText =
+        local text =
             string.format(
                 "%02d",
                 i
@@ -773,39 +453,25 @@ local function drawUI()
             .. " "
             .. songs[i].name
 
-
-        if #songText >
-            WIDTH - 4
-        then
-
-            songText =
-                songText:sub(
+        if #text > WIDTH - 4 then
+            text =
+                text:sub(
                     1,
                     WIDTH - 7
                 )
                 .. "..."
-
         end
 
-
-        term.write(
-            songText
-        )
-
+        term.write(text)
 
         y =
             y + 1
-
     end
 
-
-    -- ========================================================
-    -- CONTROLS
-    -- ========================================================
+    -- CONTROLES
 
     local controlY =
         HEIGHT - 5
-
 
     addButton(
         2,
@@ -820,7 +486,6 @@ local function drawUI()
         colors.black
     )
 
-
     addButton(
         15,
         controlY,
@@ -829,7 +494,6 @@ local function drawUI()
         colors.red,
         colors.white
     )
-
 
     addButton(
         26,
@@ -840,14 +504,10 @@ local function drawUI()
         colors.white
     )
 
-
-    -- ========================================================
-    -- MODES
-    -- ========================================================
+    -- MODOS
 
     local modeY =
         HEIGHT - 3
-
 
     addButton(
         2,
@@ -864,9 +524,7 @@ local function drawUI()
         or colors.white
     )
 
-
     local loopText
-
 
     if loopMode == 0 then
         loopText = "LOOP OFF"
@@ -875,7 +533,6 @@ local function drawUI()
     else
         loopText = "LOOP ONE"
     end
-
 
     addButton(
         20,
@@ -886,10 +543,7 @@ local function drawUI()
         colors.white
     )
 
-
-    -- ========================================================
-    -- VOLUME
-    -- ========================================================
+    -- VOLUMEN
 
     term.setCursorPos(
         2,
@@ -908,14 +562,12 @@ local function drawUI()
         .. "%"
     )
 
-
     addButton(
         10,
         HEIGHT - 1,
         "-",
         "volumeDown"
     )
-
 
     addButton(
         16,
@@ -924,13 +576,13 @@ local function drawUI()
         "volumeUp"
     )
 
+    -- PAGINA
 
     local page =
         "PAGE "
         .. currentPage
         .. "/"
         .. totalPages()
-
 
     term.setCursorPos(
         math.max(
@@ -940,85 +592,353 @@ local function drawUI()
         HEIGHT - 1
     )
 
-    term.setTextColor(
-        colors.cyan
-    )
+    term.setTextColor(colors.cyan)
+    term.write(page)
 
-    term.write(
-        page
-    )
-
-
-    term.setBackgroundColor(
-        colors.black
-    )
-
+    term.setBackgroundColor(colors.black)
 end
 
+-- ============================================================
+-- ENVIAR A RECEPTORES
+-- ============================================================
+
+local function sendAll(message)
+
+    for id, _ in pairs(zones) do
+
+        rednet.send(
+            id,
+            message,
+            PROTOCOL
+        )
+
+    end
+end
 
 -- ============================================================
--- NETWORK - REGISTER RECEIVER
+-- SIGUIENTE CANCION
 -- ============================================================
 
-local function registerZone(
-    id,
-    message
+local function nextSong()
+
+    if #songs == 0 then
+        return nil
+    end
+
+    local index = 1
+
+    if currentSong then
+
+        for i, song in ipairs(songs) do
+
+            if song ==
+                currentSong
+            then
+
+                index = i
+                break
+            end
+
+        end
+    end
+
+    if shuffle then
+
+        if #songs == 1 then
+            return songs[1]
+        end
+
+        local newIndex
+
+        repeat
+            newIndex =
+                math.random(
+                    #songs
+                )
+        until
+            songs[newIndex]
+            ~= currentSong
+
+        return songs[newIndex]
+    end
+
+    if index < #songs then
+        return songs[index + 1]
+    end
+
+    if loopMode == 1 then
+        return songs[1]
+    end
+
+    return nil
+end
+
+-- ============================================================
+-- ACCIONES
+-- ============================================================
+
+local function action(
+    name
 )
 
-    zones[id] = {
-        name =
-            message.zone
-            or ("ZONE " .. id),
+    if name == "play" then
 
-        speakers =
-            message.speakers
-            or 0,
+        if not currentSong then
+            return
+        end
 
-        lastSeen =
-            os.clock()
-    }
+        playing =
+            not playing
 
+        sendAll(
+            {
+                type =
+                    playing
+                    and "PLAY"
+                    or "PAUSE",
 
-    -- NO drawUI() HERE.
-    --
-    -- This is what removes the screen shaking.
-    --
-    markUI()
+                song =
+                    currentSong.name,
 
+                volume =
+                    volume
+            }
+        )
+
+    elseif name == "stop" then
+
+        playing = false
+
+        sendAll(
+            {
+                type = "STOP"
+            }
+        )
+
+    elseif name == "next" then
+
+        local song =
+            nextSong()
+
+        if song then
+
+            currentSong =
+                song
+
+            playing =
+                true
+
+            sendAll(
+                {
+                    type = "PLAY",
+
+                    song =
+                        currentSong.name,
+
+                    volume =
+                        volume,
+
+                    restart = true
+                }
+            )
+
+        end
+
+    elseif name == "shuffle" then
+
+        shuffle =
+            not shuffle
+
+    elseif name == "loop" then
+
+        loopMode =
+            (
+                loopMode + 1
+            ) % 3
+
+    elseif name == "volumeDown" then
+
+        volume =
+            math.max(
+                0,
+                volume - 0.05
+            )
+
+        sendAll(
+            {
+                type =
+                    "VOLUME",
+
+                volume =
+                    volume
+            }
+        )
+
+    elseif name == "volumeUp" then
+
+        volume =
+            math.min(
+                1,
+                volume + 0.05
+            )
+
+        sendAll(
+            {
+                type =
+                    "VOLUME",
+
+                volume =
+                    volume
+            }
+        )
+    end
+
+    saveSettings()
+    refreshUI()
 end
 
-
 -- ============================================================
--- NETWORK LISTENER
+-- MOUSE
 -- ============================================================
 
-local function networkListener()
+local function inputLoop()
 
     while true do
 
-        local sender,
-            message =
+        local _, button, x, y =
+            os.pullEvent(
+                "mouse_click"
+            )
+
+        if button == 1 then
+
+            local clicked = false
+
+            for _, btn in ipairs(buttons) do
+
+                if
+                    x >= btn.x1
+                    and x <= btn.x2
+                    and y >= btn.y1
+                    and y <= btn.y2
+                then
+
+                    clicked = true
+
+                    action(
+                        btn.action
+                    )
+
+                    break
+                end
+            end
+
+            -- SONG CLICK
+
+            if not clicked then
+
+                local playlistY =
+                    TOP_ROWS + 1
+
+                local firstSongY =
+                    playlistY + 1
+
+                if
+                    y >= firstSongY
+                    and y <=
+                        HEIGHT - BOTTOM_ROWS
+                then
+
+                    local start =
+                        (
+                            currentPage - 1
+                        )
+                        * songsPerPage
+                        + 1
+
+                    local index =
+                        start
+                        + (
+                            y
+                            - firstSongY
+                        )
+
+                    if
+                        index >= 1
+                        and index <= #songs
+                    then
+
+                        currentSong =
+                            songs[index]
+
+                        playing =
+                            true
+
+                        sendAll(
+                            {
+                                type = "PLAY",
+
+                                song =
+                                    currentSong.name,
+
+                                volume =
+                                    volume,
+
+                                restart = true
+                            }
+                        )
+
+                        saveSettings()
+                        refreshUI()
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ============================================================
+-- NETWORK
+-- ============================================================
+
+local function networkLoop()
+
+    while true do
+
+        local sender, message =
             rednet.receive(
                 PROTOCOL
             )
 
-
-        if sender
+        if
+            sender
             and type(message)
             == "table"
         then
 
-            if message.type
+            if
+                message.type
                 == "HELLO"
                 or message.type
                 == "RECEIVER_HELLO"
             then
 
-                registerZone(
-                    sender,
-                    message
-                )
+                zones[sender] =
+                    {
+                        name =
+                            message.zone
+                            or (
+                                "ZONE "
+                                .. sender
+                            ),
 
+                        speakers =
+                            message.speakers
+                            or 0,
+
+                        lastSeen =
+                            os.clock()
+                    }
 
                 rednet.send(
                     sender,
@@ -1031,46 +951,49 @@ local function networkListener()
                     PROTOCOL
                 )
 
+                refreshUI()
 
-            elseif message.type
+            elseif
+                message.type
                 == "PONG"
             then
 
-                if zones[sender] then
+                if not zones[sender] then
 
-                    zones[sender].lastSeen =
-                        os.clock()
+                    zones[sender] =
+                        {
+                            name =
+                                message.zone
+                                or (
+                                    "ZONE "
+                                    .. sender
+                                ),
+
+                            speakers =
+                                message.speakers
+                                or 0,
+
+                            lastSeen =
+                                os.clock()
+                        }
 
                 else
 
-                    registerZone(
-                        sender,
-                        message
-                    )
-
+                    zones[sender].lastSeen =
+                        os.clock()
                 end
 
-            elseif message.type
-                == "AUDIO_ACK"
-            then
-
-                -- Audio ACKs are handled
-                -- by the streaming system.
-
+                refreshUI()
             end
-
         end
-
     end
-
 end
 
-
 -- ============================================================
--- NETWORK MAINTENANCE
+-- NETWORK WATCHDOG
 -- ============================================================
 
-local function networkMaintenance()
+local function watchdog()
 
     while true do
 
@@ -1082,10 +1005,8 @@ local function networkMaintenance()
             PROTOCOL
         )
 
-
         local now =
             os.clock()
-
 
         for id, zone
             in pairs(zones)
@@ -1102,707 +1023,23 @@ local function networkMaintenance()
                 PROTOCOL
             )
 
-
-            if now -
-                zone.lastSeen
+            if
+                now
+                - zone.lastSeen
                 > 15
             then
 
-                zones[id] =
-                    nil
-
-                markUI()
-
+                zones[id] = nil
+                refreshUI()
             end
-
         end
-
 
         os.sleep(5)
-
     end
-
 end
-
-
--- ============================================================
--- GET ACTIVE ZONES
--- ============================================================
-
-local function getZoneIDs()
-
-    local ids = {}
-
-
-    for id, _ in pairs(zones) do
-
-        table.insert(
-            ids,
-            id
-        )
-
-    end
-
-
-    table.sort(ids)
-
-
-    return ids
-
-end
-
-
--- ============================================================
--- SEND CONTROL
--- ============================================================
-
-local function sendToAll(
-    message
-)
-
-    for id, _ in pairs(zones) do
-
-        rednet.send(
-            id,
-            message,
-            PROTOCOL
-        )
-
-    end
-
-end
-
-
--- ============================================================
--- STREAM AUDIO
--- ============================================================
-
-local function streamSong(
-    song,
-    token
-)
-
-    local ok,
-        data =
-        pcall(
-            song.fn
-        )
-
-
-    if not ok then
-
-        playing = false
-
-        markUI()
-
-        return
-
-    end
-
-
-    local length =
-        #data
-
-
-    local sequence = 0
-
-
-    for position = 1,
-        length,
-        AUDIO_CHUNK
-    do
-
-        -- ====================================================
-        -- CANCEL CHECK
-        -- ====================================================
-
-        if token
-            ~= playbackToken
-            or not playing
-        then
-
-            return
-
-        end
-
-
-        local chunk =
-            data:sub(
-                position,
-                math.min(
-                    position
-                    + AUDIO_CHUNK
-                    - 1,
-                    length
-                )
-            )
-
-
-        sequence =
-            sequence + 1
-
-
-        local ids =
-            getZoneIDs()
-
-
-        -- ====================================================
-        -- SEND CHUNK
-        -- ====================================================
-
-        for _, id in ipairs(ids) do
-
-            rednet.send(
-
-                id,
-
-                {
-                    type =
-                        "AUDIO",
-
-                    song =
-                        song.name,
-
-                    sequence =
-                        sequence,
-
-                    data =
-                        chunk,
-
-                    volume =
-                        volume,
-
-                    last =
-                        (
-                            position
-                            + AUDIO_CHUNK
-                            > length
-                        )
-                },
-
-                PROTOCOL
-
-            )
-
-        end
-
-
-        -- ====================================================
-        -- WAIT A LITTLE
-        --
-        -- We deliberately don't wait for every ACK here.
-        -- This allows the central to keep sending audio while
-        -- the receiver buffers it.
-        -- ====================================================
-
-        os.sleep(
-            0.015
-        )
-
-    end
-
-
-    -- ========================================================
-    -- END OF SONG
-    -- ========================================================
-
-    for _, id in ipairs(
-        getZoneIDs()
-    ) do
-
-        rednet.send(
-
-            id,
-
-            {
-                type =
-                    "AUDIO_END",
-
-                song =
-                    song.name,
-
-                sequence =
-                    sequence
-
-            },
-
-            PROTOCOL
-
-        )
-
-    end
-
-end
-
-
--- ============================================================
--- CHOOSE NEXT SONG
--- ============================================================
-
-local function chooseNextSong()
-
-    if #songs == 0 then
-        return nil
-    end
-
-
-    local index = 1
-
-
-    if currentSong then
-
-        for i, song in ipairs(songs) do
-
-            if song ==
-                currentSong
-            then
-
-                index = i
-
-                break
-
-            end
-
-        end
-
-    end
-
-
-    if shuffle then
-
-        if #songs == 1 then
-            return songs[1]
-        end
-
-
-        local newIndex
-
-
-        repeat
-
-            newIndex =
-                math.random(
-                    #songs
-                )
-
-        until
-            songs[newIndex]
-            ~= currentSong
-
-
-        return songs[newIndex]
-
-    end
-
-
-    if index < #songs then
-
-        return songs[
-            index + 1
-        ]
-
-    end
-
-
-    if loopMode == 1 then
-
-        return songs[1]
-
-    end
-
-
-    return nil
-
-end
-
-
--- ============================================================
--- PLAYBACK LOOP
--- ============================================================
-
-local function playbackLoop()
-
-    while true do
-
-        if currentSong
-            and playing
-        then
-
-            local song =
-                currentSong
-
-            local token =
-                playbackToken
-
-
-            markUI()
-
-
-            streamSong(
-                song,
-                token
-            )
-
-
-            if token
-                ~= playbackToken
-            then
-
-                -- Song was changed manually.
-
-            elseif not playing then
-
-                -- Paused/stopped.
-
-            else
-
-                -- =================================================
-                -- SONG FINISHED
-                -- =================================================
-
-                if loopMode == 2 then
-
-                    -- Repeat current song.
-
-
-                else
-
-                    local nextSong =
-                        chooseNextSong()
-
-
-                    if nextSong then
-
-                        currentSong =
-                            nextSong
-
-                    else
-
-                        currentSong =
-                            nil
-
-                        playing =
-                            false
-
-                    end
-
-                end
-
-
-                saveSettings()
-
-                markUI()
-
-            end
-
-        else
-
-            os.sleep(
-                0.05
-            )
-
-        end
-
-    end
-
-end
-
-
--- ============================================================
--- BUTTON ACTION
--- ============================================================
-
-local function buttonAction(
-    action
-)
-
-    if action == "play" then
-
-        if not currentSong then
-            return
-        end
-
-
-        if playing then
-
-            playing = false
-
-            playbackToken =
-                playbackToken + 1
-
-
-            sendToAll(
-                {
-                    type =
-                        "PAUSE"
-                }
-            )
-
-        else
-
-            playing = true
-
-            playbackToken =
-                playbackToken + 1
-
-
-            sendToAll(
-                {
-                    type =
-                        "PLAY",
-
-                    song =
-                        currentSong.name,
-
-                    volume =
-                        volume
-                }
-            )
-
-        end
-
-
-    elseif action == "stop" then
-
-        playing = false
-
-        playbackToken =
-            playbackToken + 1
-
-
-        sendToAll(
-            {
-                type =
-                    "STOP"
-            }
-        )
-
-
-    elseif action == "next" then
-
-        local nextSong =
-            chooseNextSong()
-
-
-        if nextSong then
-
-            currentSong =
-                nextSong
-
-            playing =
-                true
-
-            playbackToken =
-                playbackToken + 1
-
-
-            sendToAll(
-                {
-                    type =
-                        "STOP"
-                }
-            )
-
-        end
-
-
-    elseif action == "shuffle" then
-
-        shuffle =
-            not shuffle
-
-
-    elseif action == "loop" then
-
-        loopMode =
-            (
-                loopMode + 1
-            ) % 3
-
-
-    elseif action == "volumeDown" then
-
-        volume =
-            math.max(
-                0,
-                volume - 0.05
-            )
-
-
-        sendToAll(
-            {
-                type =
-                    "VOLUME",
-
-                volume =
-                    volume
-            }
-        )
-
-
-    elseif action == "volumeUp" then
-
-        volume =
-            math.min(
-                1,
-                volume + 0.05
-            )
-
-
-        sendToAll(
-            {
-                type =
-                    "VOLUME",
-
-                volume =
-                    volume
-            }
-        )
-
-    end
-
-
-    saveSettings()
-
-    markUI()
-
-end
-
-
--- ============================================================
--- MOUSE INPUT
--- ============================================================
-
-local function inputLoop()
-
-    while true do
-
-        local event,
-            button,
-            x,
-            y =
-            os.pullEvent(
-                "mouse_click"
-            )
-
-
-        if button == 1 then
-
-            local clicked =
-                false
-
-
-            -- =================================================
-            -- BUTTONS
-            -- =================================================
-
-            for _, btn
-                in ipairs(buttons)
-            do
-
-                if
-                    x >= btn.x1
-                    and x <= btn.x2
-                    and y >= btn.y1
-                    and y <= btn.y2
-                then
-
-                    clicked =
-                        true
-
-
-                    buttonAction(
-                        btn.action
-                    )
-
-
-                    break
-
-                end
-
-            end
-
-
-            -- =================================================
-            -- SONG LIST
-            -- =================================================
-
-            if not clicked then
-
-                local playlistY =
-                    TOP_ROWS + 1
-
-
-                local firstSongY =
-                    playlistY + 1
-
-
-                local start =
-                    (
-                        currentPage - 1
-                    )
-                    * songsPerPage
-                    + 1
-
-
-                if y >= firstSongY
-                    and y <=
-                        HEIGHT - BOTTOM_ROWS
-                then
-
-                    local index =
-                        start
-                        + (
-                            y
-                            - firstSongY
-                        )
-
-
-                    if index >= 1
-                        and index <= #songs
-                    then
-
-                        currentSong =
-                            songs[index]
-
-
-                        playing =
-                            true
-
-                        playbackToken =
-                            playbackToken + 1
-
-
-                        sendToAll(
-                            {
-                                type =
-                                    "STOP"
-                            }
-                        )
-
-
-                        saveSettings()
-
-                        markUI()
-
-                    end
-
-                end
-
-            end
-
-        end
-
-    end
-
-end
-
 
 -- ============================================================
 -- UI LOOP
---
--- Redraw only when needed.
--- This eliminates the screen shaking caused by network events.
 -- ============================================================
 
 local function uiLoop()
@@ -1811,22 +1048,71 @@ local function uiLoop()
 
         if uiDirty then
 
-            uiDirty =
-                false
+            uiDirty = false
 
             drawUI()
-
         end
 
-
-        os.sleep(
-            0.05
-        )
-
+        os.sleep(0.05)
     end
-
 end
 
+-- ============================================================
+-- AUTO REFRESH GITHUB
+-- ============================================================
+
+local function songRefreshLoop()
+
+    while true do
+
+        os.sleep(60)
+
+        local ok, newSongs =
+            pcall(
+                loadSongs
+            )
+
+        if ok
+            and #newSongs > 0
+        then
+
+            songs =
+                newSongs
+
+            if currentSong then
+
+                local currentName =
+                    currentSong.name
+
+                currentSong =
+                    nil
+
+                for _, song
+                    in ipairs(songs)
+                do
+
+                    if song.name ==
+                        currentName
+                    then
+
+                        currentSong =
+                            song
+
+                        break
+                    end
+                end
+            end
+
+            currentPage =
+                math.min(
+                    currentPage,
+                    totalPages()
+                )
+
+            refreshUI()
+        end
+    end
+end
 
 -- ============================================================
 -- START
@@ -1834,17 +1120,12 @@ end
 
 drawUI()
 
-
 parallel.waitForAny(
 
-    playbackLoop,
-
     inputLoop,
-
-    networkListener,
-
-    networkMaintenance,
-
-    uiLoop
+    networkLoop,
+    watchdog,
+    uiLoop,
+    songRefreshLoop
 
 )
