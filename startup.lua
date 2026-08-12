@@ -13,8 +13,7 @@ end
 
 -- ===== Terminal setup =====
 -- La interfaz se muestra en la pantalla del ordenador.
--- Los clicks se realizan con el ratón del ordenador.
--- NO usamos term.redirect().
+-- NO usamos term.redirect(), así que el ratón funciona normalmente.
 
 term.setBackgroundColor(colors.black)
 term.setTextColor(colors.white)
@@ -117,7 +116,6 @@ local bottomRows = 5
 
 local songsPerPage = height - topRows - bottomRows
 
--- Evita problemas si la pantalla es muy pequeña
 if songsPerPage < 1 then
     songsPerPage = 1
 end
@@ -280,7 +278,6 @@ local function drawUI()
 
     end
 
-    -- Volvemos al fondo negro para que no quede gris
     term.setBackgroundColor(colors.black)
 
 end
@@ -432,6 +429,10 @@ local function playerLoop()
                         currentSong.name
                     )
 
+                else
+
+                    settings.unset("currentSong")
+
                 end
 
                 settings.set(
@@ -463,8 +464,9 @@ local function inputLoop()
 
     while true do
 
-        -- Esperamos DIRECTAMENTE un click del ratón
-        -- del ordenador.
+        -- El ratón está conectado al ordenador.
+        -- Esperamos directamente el evento mouse_click.
+
         local button, x, y =
             os.pullEvent("mouse_click")
 
@@ -662,10 +664,19 @@ local function inputLoop()
             shuffle
         )
 
-        settings.set(
-            "currentSong",
-            currentSong and currentSong.name
-        )
+        -- No se puede guardar nil con settings.set()
+        if currentSong then
+
+            settings.set(
+                "currentSong",
+                currentSong.name
+            )
+
+        else
+
+            settings.unset("currentSong")
+
+        end
 
         settings.set(
             "playing",
