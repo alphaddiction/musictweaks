@@ -1,95 +1,166 @@
-local repo = "alphaddiction/musictweaks"
+-- ============================================================
+-- MusicTweaks - ComputerCraft / CC:Tweaked
+-- Standalone startup.lua
+--
+-- INTERFAZ:
+--   Se muestra SIEMPRE en la pantalla del ordenador.
+--   No utiliza monitores.
+--
+-- CONTROL:
+--   Ratón del ordenador -> mouse_click
+--
+-- REPOSITORIO:
+--   https://github.com/alphaddiction/musictweaks
+-- ============================================================
 
--- CC: Tweaked DFPWM Playlist
--- Control mediante ratón en la pantalla del ordenador
 
-local dfpwm = require("cc.audio.dfpwm")
+-- ============================================================
+-- CONFIGURACION
+-- ============================================================
 
-local speakers = { peripheral.find("speaker") }
+local REPO = "alphaddiction/musictweaks"
+
+local INDEX_URL =
+    "https://raw.githubusercontent.com/"
+    .. REPO
+    .. "/refs/heads/main/index.txt"
+
+
+-- ============================================================
+-- TERMINAL DEL ORDENADOR
+-- ============================================================
+
+-- term.native() es la pantalla nativa del ordenador.
+-- Esto evita que una redirección anterior hacia un monitor
+-- nos mande la interfaz a otro dispositivo.
+
+local computerTerm = term.native()
+
+term.redirect(computerTerm)
+
+term.setBackgroundColor(colors.black)
+term.setTextColor(colors.white)
+term.clear()
+term.setCursorPos(1, 1)
+
+
+-- ============================================================
+-- SPEAKERS
+-- ============================================================
+
+local speakers = {
+    peripheral.find("speaker")
+}
 
 if #speakers == 0 then
     error("No speaker(s) attached")
 end
 
--- ===== Terminal setup =====
 
-term.setBackgroundColor(colors.black)
-term.setTextColor(colors.white)
-term.clear()
+-- ============================================================
+-- DFPWM
+-- ============================================================
 
--- ===== Songs setup =====
+local dfpwm = require("cc.audio.dfpwm")
 
-local songIndexUrl =
-    "https://raw.githubusercontent.com/" ..
-    repo ..
-    "/refs/heads/main/index.txt"
+local decoder = dfpwm.make_decoder()
 
-local response = http.get(songIndexUrl)
+
+-- ============================================================
+-- CARGAR INDEX
+-- ============================================================
+
+local response = http.get(INDEX_URL)
 
 if not response then
-    error("No se pudo descargar el index.txt desde GitHub")
+    error(
+        "No se pudo descargar index.txt"
+    )
 end
 
 local indexData = response.readAll()
+
 response.close()
 
-local songNames = textutils.unserialize(indexData)
+local songNames =
+    textutils.unserialize(indexData)
 
 if not songNames then
-    error("El index.txt no tiene un formato valido")
+    error(
+        "index.txt no tiene un formato valido"
+    )
 end
+
+
+-- ============================================================
+-- CREAR LISTA DE CANCIONES
+-- ============================================================
 
 local songs = {}
 
 for _, name in ipairs(songNames) do
 
-    table.insert(songs, {
+    table.insert(
+        songs,
+        {
+            name = name,
 
-        name = name,
+            fn = function()
 
-        fn = function()
+                local encodedName =
+                    name:gsub(
+                        " ",
+                        "%%20"
+                    )
 
-            local encodedName =
-                name:gsub(" ", "%%20")
+                local url =
+                    "https://raw.githubusercontent.com/"
+                    .. REPO
+                    .. "/refs/heads/main/"
+                    .. encodedName
+                    .. ".dfpwm"
 
-            local url =
-                "https://raw.githubusercontent.com/" ..
-                repo ..
-                "/refs/heads/main/" ..
-                encodedName ..
-                ".dfpwm"
+                local songResponse =
+                    http.get(url)
 
-            local songResponse =
-                http.get(url)
+                if not songResponse then
 
-            if not songResponse then
-                error(
-                    "No se pudo descargar: " ..
-                    name ..
-                    ".dfpwm"
-                )
+                    error(
+                        "No se pudo descargar: "
+                        .. name
+                        .. ".dfpwm"
+                    )
+
+                end
+
+                local data =
+                    songResponse.readAll()
+
+                songResponse.close()
+
+                return data
+
             end
-
-            local data =
-                songResponse.readAll()
-
-            songResponse.close()
-
-            return data
-
-        end
-    })
+        }
+    )
 
 end
 
--- ===== Playback state =====
+
+-- ============================================================
+-- ESTADO
+-- ============================================================
 
 local savedName =
-    settings.get("currentSong", nil)
+    settings.get(
+        "currentSong",
+        nil
+    )
 
 local currentSong = nil
 
-if savedName ~= nil then
+
+if savedName then
 
     for _, song in ipairs(songs) do
 
@@ -105,49 +176,78 @@ if savedName ~= nil then
 
 end
 
-local playing =
-    settings.get("playing", false)
 
-local stopFlag = false
+local playing =
+    settings.get(
+        "playing",
+        false
+    )
+
 
 local shuffle =
-    settings.get("shuffle", true)
+    settings.get(
+        "shuffle",
+        true
+    )
+
 
 local loopMode =
-    settings.get("loopMode", 0)
+    settings.get(
+        "loopMode",
+        0
+    )
 
 -- 0 = Off
 -- 1 = All
 -- 2 = One
 
+
 local volume = 0.35
 
-local decoder =
-    dfpwm.make_decoder()
+local stopFlag = false
 
-local currentPage =
-    settings.get("currentPage", 1)
+
+-- ============================================================
+-- PANTALLA
+-- ============================================================
 
 local width, height =
     term.getSize()
 
+
 local topRows = 2
+
 local bottomRows = 5
 
+
 local songsPerPage =
-    height -
-    topRows -
-    bottomRows
+    height
+    - topRows
+    - bottomRows
+
 
 if songsPerPage < 1 then
     songsPerPage = 1
 end
 
--- ===== Button storage =====
+
+local currentPage =
+    settings.get(
+        "currentPage",
+        1
+    )
+
+
+-- ============================================================
+-- BOTONES
+-- ============================================================
 
 local buttons = {}
 
--- ===== Page calculation =====
+
+-- ============================================================
+-- PAGINAS
+-- ============================================================
 
 local function totalPages()
 
@@ -161,229 +261,20 @@ local function totalPages()
 
 end
 
--- Make sure the saved page is valid
 
 if currentPage < 1 then
     currentPage = 1
 end
 
+
 if currentPage > totalPages() then
     currentPage = totalPages()
 end
 
--- ===== UI =====
 
-local function drawUI()
-
-    term.setBackgroundColor(
-        colors.black
-    )
-
-    term.setTextColor(
-        colors.white
-    )
-
-    term.clear()
-
-    -- ===== Now Playing =====
-
-    term.setCursorPos(2, 1)
-
-    term.setTextColor(
-        colors.white
-    )
-
-    term.write(
-        "Now Playing: " ..
-        (
-            currentSong
-            and currentSong.name
-            or "(none)"
-        )
-    )
-
-    -- ===== Song list =====
-
-    local startIdx =
-        (currentPage - 1) *
-        songsPerPage +
-        1
-
-    local y = 3
-
-    for i = startIdx,
-        math.min(
-            startIdx +
-            songsPerPage -
-            1,
-            #songs
-        )
-    do
-
-        term.setCursorPos(
-            2,
-            y
-        )
-
-        if currentSong ==
-            songs[i]
-        then
-
-            term.setTextColor(
-                colors.yellow
-            )
-
-        else
-
-            term.setTextColor(
-                colors.white
-            )
-
-        end
-
-        term.write(
-            songs[i].name
-        )
-
-        y = y + 1
-
-    end
-
-    -- ===== Buttons =====
-
-    buttons = {}
-
-    local btnLines = {
-
-        {
-            "Shuffle: " ..
-            (
-                shuffle
-                and "On"
-                or "Off"
-            ),
-
-            "Loop: " ..
-            ({
-                [0] = "Off",
-                [1] = "All",
-                [2] = "One"
-            })[loopMode]
-        },
-
-        {
-            "Page " ..
-            currentPage ..
-            "/" ..
-            totalPages(),
-
-            "Prev",
-            "Next"
-        },
-
-        {
-            (
-                playing
-                and "Playing"
-                or "Stopped"
-            ),
-
-            "Skip"
-        },
-
-        {
-            "-",
-
-            "Volume: " ..
-            math.floor(
-                volume * 100
-            ) ..
-            "%",
-
-            "+"
-        }
-
-    }
-
-    local startY =
-        height -
-        bottomRows +
-        1
-
-    for lineIdx, line
-        in ipairs(btnLines)
-    do
-
-        local x = 2
-
-        local buttonY =
-            startY +
-            lineIdx -
-            1
-
-        for _, btn
-            in ipairs(line)
-        do
-
-            local btnStartX = x
-
-            local btnEndX =
-                btnStartX +
-                #btn +
-                1
-
-            -- Dibujar botón
-
-            term.setCursorPos(
-                btnStartX,
-                buttonY
-            )
-
-            term.setBackgroundColor(
-                colors.gray
-            )
-
-            term.setTextColor(
-                colors.white
-            )
-
-            term.write(
-                " " ..
-                btn ..
-                " "
-            )
-
-            -- Guardar zona exacta
-            -- del botón
-
-            table.insert(
-                buttons,
-                {
-                    text = btn,
-
-                    x1 = btnStartX,
-                    x2 = btnEndX,
-
-                    y1 = buttonY,
-                    y2 = buttonY
-                }
-            )
-
-            x =
-                btnEndX +
-                2
-
-        end
-
-    end
-
-    term.setBackgroundColor(
-        colors.black
-    )
-
-end
-
--- ===== Save settings =====
+-- ============================================================
+-- GUARDAR CONFIGURACION
+-- ============================================================
 
 local function saveSettings()
 
@@ -402,6 +293,12 @@ local function saveSettings()
         shuffle
     )
 
+    settings.set(
+        "playing",
+        playing
+    )
+
+
     if currentSong then
 
         settings.set(
@@ -417,31 +314,299 @@ local function saveSettings()
 
     end
 
-    settings.set(
-        "playing",
-        playing
-    )
 
     settings.save()
 
 end
 
--- ===== Playback =====
+
+-- ============================================================
+-- DIBUJAR INTERFAZ
+-- ============================================================
+
+local function drawUI()
+
+    term.redirect(
+        computerTerm
+    )
+
+    term.setBackgroundColor(
+        colors.black
+    )
+
+    term.setTextColor(
+        colors.white
+    )
+
+    term.clear()
+
+
+    -- --------------------------------------------------------
+    -- NOW PLAYING
+    -- --------------------------------------------------------
+
+    term.setCursorPos(
+        2,
+        1
+    )
+
+    term.setTextColor(
+        colors.white
+    )
+
+    term.write(
+        "Now Playing: "
+        ..
+        (
+            currentSong
+            and currentSong.name
+            or "(none)"
+        )
+    )
+
+
+    -- --------------------------------------------------------
+    -- CANCIONES
+    -- --------------------------------------------------------
+
+    local startIdx =
+        (currentPage - 1)
+        * songsPerPage
+        + 1
+
+
+    local y = 3
+
+
+    for i = startIdx,
+        math.min(
+            startIdx
+            + songsPerPage
+            - 1,
+            #songs
+        )
+    do
+
+        term.setCursorPos(
+            2,
+            y
+        )
+
+
+        if currentSong
+            == songs[i]
+        then
+
+            term.setTextColor(
+                colors.yellow
+            )
+
+        else
+
+            term.setTextColor(
+                colors.white
+            )
+
+        end
+
+
+        term.write(
+            songs[i].name
+        )
+
+
+        y = y + 1
+
+    end
+
+
+    -- --------------------------------------------------------
+    -- BOTONES
+    -- --------------------------------------------------------
+
+    buttons = {}
+
+
+    local loopName =
+        ({
+            [0] = "Off",
+            [1] = "All",
+            [2] = "One"
+        })[loopMode]
+
+
+    local btnLines = {
+
+        {
+            "Shuffle: "
+            ..
+            (
+                shuffle
+                and "On"
+                or "Off"
+            ),
+
+            "Loop: "
+            ..
+            loopName
+        },
+
+
+        {
+            "Page "
+            ..
+            currentPage
+            ..
+            "/"
+            ..
+            totalPages(),
+
+            "Prev",
+
+            "Next"
+        },
+
+
+        {
+            (
+                playing
+                and "Playing"
+                or "Stopped"
+            ),
+
+            "Skip"
+        },
+
+
+        {
+            "-",
+
+            "Volume: "
+            ..
+            math.floor(
+                volume * 100
+            )
+            ..
+            "%",
+
+            "+"
+        }
+
+    }
+
+
+    local startY =
+        height
+        - bottomRows
+        + 1
+
+
+    for lineIndex,
+        line
+        in ipairs(btnLines)
+    do
+
+        local x = 2
+
+        local buttonY =
+            startY
+            + lineIndex
+            - 1
+
+
+        for _, text
+            in ipairs(line)
+        do
+
+            if text ~= "" then
+
+                local x1 = x
+
+                local x2 =
+                    x1
+                    + #text
+                    + 1
+
+
+                -- Dibujar botón
+
+                term.setCursorPos(
+                    x1,
+                    buttonY
+                )
+
+                term.setBackgroundColor(
+                    colors.gray
+                )
+
+                term.setTextColor(
+                    colors.white
+                )
+
+                term.write(
+                    " "
+                    ..
+                    text
+                    ..
+                    " "
+                )
+
+
+                -- Guardar coordenadas
+
+                table.insert(
+                    buttons,
+                    {
+                        text = text,
+
+                        x1 = x1,
+                        x2 = x2,
+
+                        y1 = buttonY,
+                        y2 = buttonY
+                    }
+                )
+
+
+                x =
+                    x2 + 2
+
+            end
+
+        end
+
+    end
+
+
+    term.setBackgroundColor(
+        colors.black
+    )
+
+end
+
+
+-- ============================================================
+-- REPRODUCCION
+-- ============================================================
 
 local function playerLoop()
 
     while true do
 
-        if currentSong and playing then
+        if currentSong
+            and playing
+        then
 
             local songData =
                 currentSong.fn()
 
-            local dataLen =
+
+            local dataLength =
                 #songData
 
+
             for i = 1,
-                dataLen,
+                dataLength,
                 16 * 1024
             do
 
@@ -449,31 +614,36 @@ local function playerLoop()
                     break
                 end
 
+
                 local chunk =
                     songData:sub(
                         i,
                         math.min(
-                            i +
-                            16 * 1024 -
-                            1,
-                            dataLen
+                            i
+                            + 16 * 1024
+                            - 1,
+                            dataLength
                         )
                     )
+
 
                 local buffer =
                     decoder(chunk)
 
+
                 local pending = {}
 
-                for _, spk
-                    in pairs(speakers)
+
+                for _, speaker
+                    in ipairs(speakers)
                 do
 
                     if stopFlag then
                         break
                     end
 
-                    if not spk.playAudio(
+
+                    if not speaker.playAudio(
                         buffer,
                         volume
                     )
@@ -481,35 +651,43 @@ local function playerLoop()
 
                         pending[
                             peripheral.getName(
-                                spk
+                                speaker
                             )
-                        ] = spk
+                        ] = speaker
 
                     end
 
                 end
+
 
                 while
                     not stopFlag
                     and next(pending)
                 do
 
-                    local _, name =
+                    local event,
+                        speakerName =
                         os.pullEvent(
                             "speaker_audio_empty"
                         )
 
-                    local spk =
-                        pending[name]
 
-                    if spk
-                        and spk.playAudio(
+                    local speaker =
+                        pending[
+                            speakerName
+                        ]
+
+
+                    if speaker
+                        and speaker.playAudio(
                             buffer,
                             volume
                         )
                     then
 
-                        pending[name] = nil
+                        pending[
+                            speakerName
+                        ] = nil
 
                     end
 
@@ -517,7 +695,10 @@ local function playerLoop()
 
             end
 
-            -- ===== Song finished =====
+
+            -- ------------------------------------------------
+            -- FIN DE CANCION
+            -- ------------------------------------------------
 
             if stopFlag then
 
@@ -525,9 +706,14 @@ local function playerLoop()
 
             else
 
+                -- LOOP ONE
+
                 if loopMode == 2 then
 
-                    -- Same song
+                    -- No cambiar canción.
+
+
+                -- SHUFFLE
 
                 elseif shuffle then
 
@@ -538,44 +724,55 @@ local function playerLoop()
                             )
                         ]
 
+
+                -- LOOP ALL
+
                 elseif loopMode == 1 then
 
-                    local idx = 1
+                    local index = 1
 
-                    for i, s
+
+                    for i, song
                         in ipairs(songs)
                     do
 
-                        if s ==
-                            currentSong
+                        if song
+                            == currentSong
                         then
 
-                            idx = i
+                            index = i
 
                             break
 
                         end
 
                     end
+
 
                     currentSong =
                         songs[
-                            idx % #songs + 1
+                            index
+                            % #songs
+                            + 1
                         ]
+
+
+                -- NORMAL
 
                 else
 
-                    local idx = 1
+                    local index = 1
 
-                    for i, s
+
+                    for i, song
                         in ipairs(songs)
                     do
 
-                        if s ==
-                            currentSong
+                        if song
+                            == currentSong
                         then
 
-                            idx = i
+                            index = i
 
                             break
 
@@ -583,10 +780,13 @@ local function playerLoop()
 
                     end
 
-                    if idx < #songs then
+
+                    if index < #songs then
 
                         currentSong =
-                            songs[idx + 1]
+                            songs[
+                                index + 1
+                            ]
 
                     else
 
@@ -598,15 +798,20 @@ local function playerLoop()
 
                 end
 
+
                 saveSettings()
 
             end
 
+
             drawUI()
+
 
         else
 
-            os.sleep(0.05)
+            os.sleep(
+                0.05
+            )
 
         end
 
@@ -614,36 +819,46 @@ local function playerLoop()
 
 end
 
--- ===== Mouse input =====
+
+-- ============================================================
+-- RATON DEL ORDENADOR
+-- ============================================================
 
 local function inputLoop()
 
     drawUI()
 
+
     while true do
 
-        -- IMPORTANTE:
-        -- El ordenador recibe:
+        -- ====================================================
+        -- ESTA ES LA PARTE IMPORTANTE
         --
-        -- button, x, y
+        -- NO monitor_touch
+        -- NO monitor
+        -- NO eventos genéricos
         --
-        -- mediante mouse_click.
+        -- El ordenador recibe mouse_click.
+        -- ====================================================
 
-        local button, x, y =
+        local button,
+            x,
+            y =
             os.pullEvent(
                 "mouse_click"
             )
 
-        -- Solo aceptamos
-        -- el botón izquierdo.
+
+        -- Solo botón izquierdo
 
         if button == 1 then
 
-            local clicked = false
+            local handled = false
 
-            -- ==================================
+
+            -- =================================================
             -- BOTONES
-            -- ==================================
+            -- =================================================
 
             for _, btn
                 in ipairs(buttons)
@@ -656,64 +871,71 @@ local function inputLoop()
                     and y <= btn.y2
                 then
 
-                    clicked = true
+                    handled = true
 
-                    -- ===== Shuffle =====
 
-                    if
-                        btn.text:find(
-                            "Shuffle"
-                        )
+                    -- -----------------------------------------
+                    -- SHUFFLE
+                    -- -----------------------------------------
+
+                    if btn.text:find(
+                        "Shuffle"
+                    )
                     then
 
                         shuffle =
                             not shuffle
 
-                    -- ===== Loop =====
 
-                    elseif
-                        btn.text:find(
-                            "Loop"
-                        )
+                    -- -----------------------------------------
+                    -- LOOP
+                    -- -----------------------------------------
+
+                    elseif btn.text:find(
+                        "Loop"
+                    )
                     then
 
                         loopMode =
                             (
-                                loopMode +
-                                1
+                                loopMode
+                                + 1
                             ) % 3
 
-                    -- ===== Previous =====
 
-                    elseif
-                        btn.text == "Prev"
-                    then
+                    -- -----------------------------------------
+                    -- PREV
+                    -- -----------------------------------------
+
+                    elseif btn.text == "Prev" then
 
                         if currentPage > 1 then
 
                             currentPage =
-                                currentPage -
-                                1
+                                currentPage - 1
 
                         end
 
-                    -- ===== Next =====
 
-                    elseif
-                        btn.text == "Next"
-                    then
+                    -- -----------------------------------------
+                    -- NEXT
+                    -- -----------------------------------------
 
-                        if currentPage <
-                            totalPages()
+                    elseif btn.text == "Next" then
+
+                        if currentPage
+                            < totalPages()
                         then
 
                             currentPage =
-                                currentPage +
-                                1
+                                currentPage + 1
 
                         end
 
-                    -- ===== Play / Stop =====
+
+                    -- -----------------------------------------
+                    -- PLAY / STOP
+                    -- -----------------------------------------
 
                     elseif
                         btn.text == "Playing"
@@ -737,27 +959,29 @@ local function inputLoop()
 
                         end
 
-                    -- ===== Skip =====
 
-                    elseif
-                        btn.text == "Skip"
-                    then
+                    -- -----------------------------------------
+                    -- SKIP
+                    -- -----------------------------------------
+
+                    elseif btn.text == "Skip" then
 
                         if #songs > 0 then
 
-                            local idx = 1
+                            local index = 1
+
 
                             if currentSong then
 
-                                for i, s
+                                for i, song
                                     in ipairs(songs)
                                 do
 
-                                    if s ==
-                                        currentSong
+                                    if song
+                                        == currentSong
                                     then
 
-                                        idx = i
+                                        index = i
 
                                         break
 
@@ -766,6 +990,7 @@ local function inputLoop()
                                 end
 
                             end
+
 
                             if shuffle then
 
@@ -776,13 +1001,11 @@ local function inputLoop()
                                         )
                                     ]
 
-                            elseif idx <
-                                #songs
-                            then
+                            elseif index < #songs then
 
                                 currentSong =
                                     songs[
-                                        idx + 1
+                                        index + 1
                                     ]
 
                             else
@@ -792,39 +1015,41 @@ local function inputLoop()
 
                             end
 
+
                             stopFlag = true
 
                             playing = true
 
                         end
 
-                    -- ===== Volume - =====
 
-                    elseif
-                        btn.text == "-"
-                    then
+                    -- -----------------------------------------
+                    -- VOLUMEN -
+                    -- -----------------------------------------
+
+                    elseif btn.text == "-" then
 
                         volume =
                             math.max(
                                 0,
-                                volume -
-                                0.05
+                                volume - 0.05
                             )
 
-                    -- ===== Volume + =====
 
-                    elseif
-                        btn.text == "+"
-                    then
+                    -- -----------------------------------------
+                    -- VOLUMEN +
+                    -- -----------------------------------------
+
+                    elseif btn.text == "+" then
 
                         volume =
                             math.min(
                                 1,
-                                volume +
-                                0.05
+                                volume + 0.05
                             )
 
                     end
+
 
                     saveSettings()
 
@@ -836,44 +1061,53 @@ local function inputLoop()
 
             end
 
-            -- ==================================
-            -- SONG LIST
-            -- ==================================
 
-            if not clicked then
+            -- =================================================
+            -- LISTA DE CANCIONES
+            -- =================================================
+
+            if not handled then
 
                 local startIdx =
-                    (currentPage - 1) *
-                    songsPerPage +
-                    1
+                    (currentPage - 1)
+                    * songsPerPage
+                    + 1
+
 
                 for i = startIdx,
                     math.min(
-                        startIdx +
-                        songsPerPage -
-                        1,
+                        startIdx
+                        + songsPerPage
+                        - 1,
                         #songs
                     )
                 do
 
                     local row =
-                        3 +
-                        (i - startIdx)
+                        3
+                        + (
+                            i
+                            - startIdx
+                        )
+
 
                     if y == row then
 
                         currentSong =
                             songs[i]
 
+
                         stopFlag = true
 
                         playing = true
+
 
                         saveSettings()
 
                         drawUI()
 
-                        clicked = true
+
+                        handled = true
 
                         break
 
@@ -889,7 +1123,13 @@ local function inputLoop()
 
 end
 
--- ===== Start program =====
+
+-- ============================================================
+-- ARRANCAR
+-- ============================================================
+
+drawUI()
+
 
 parallel.waitForAny(
     playerLoop,
