@@ -1,21 +1,6 @@
 -- ============================================================
--- MusicTweaks - ComputerCraft / CC:Tweaked
--- Standalone startup.lua
---
--- INTERFAZ:
---   Se muestra SIEMPRE en la pantalla del ordenador.
---   No utiliza monitores.
---
--- CONTROL:
---   Ratón del ordenador -> mouse_click
---
--- REPOSITORIO:
---   https://github.com/alphaddiction/musictweaks
--- ============================================================
-
-
--- ============================================================
--- CONFIGURACION
+-- MUSIC TWEAKS V2
+-- CC:Tweaked - Advanced Computer Music Player
 -- ============================================================
 
 local REPO = "alphaddiction/musictweaks"
@@ -27,21 +12,40 @@ local INDEX_URL =
 
 
 -- ============================================================
--- TERMINAL DEL ORDENADOR
+-- TERMINAL
 -- ============================================================
 
--- term.native() es la pantalla nativa del ordenador.
--- Esto evita que una redirección anterior hacia un monitor
--- nos mande la interfaz a otro dispositivo.
+local screen = term.native()
 
-local computerTerm = term.native()
+term.redirect(screen)
 
-term.redirect(computerTerm)
+local W, H = term.getSize()
 
 term.setBackgroundColor(colors.black)
 term.setTextColor(colors.white)
 term.clear()
 term.setCursorPos(1, 1)
+
+
+-- ============================================================
+-- COLORES
+-- ============================================================
+
+local BG        = colors.black
+local PANEL     = colors.gray
+local PANEL2    = colors.lightGray
+
+local TEXT      = colors.white
+local DIM       = colors.lightGray
+
+local ACCENT    = colors.cyan
+local ACTIVE    = colors.blue
+
+local GREEN     = colors.lime
+local RED       = colors.red
+
+local YELLOW    = colors.yellow
+local PURPLE    = colors.purple
 
 
 -- ============================================================
@@ -53,7 +57,20 @@ local speakers = {
 }
 
 if #speakers == 0 then
-    error("No speaker(s) attached")
+
+    term.clear()
+    term.setCursorPos(2, 2)
+
+    term.setTextColor(RED)
+
+    print("MUSIC TWEAKS")
+    print("")
+    print("ERROR: No speaker found.")
+    print("")
+    print("Connect a speaker to the computer.")
+
+    error("No speaker attached")
+
 end
 
 
@@ -63,40 +80,53 @@ end
 
 local dfpwm = require("cc.audio.dfpwm")
 
-local decoder = dfpwm.make_decoder()
-
 
 -- ============================================================
--- CARGAR INDEX
+-- DOWNLOAD INDEX
 -- ============================================================
 
 local response = http.get(INDEX_URL)
 
 if not response then
-    error(
-        "No se pudo descargar index.txt"
-    )
+
+    term.clear()
+    term.setCursorPos(2, 2)
+
+    term.setTextColor(RED)
+
+    print("MUSIC TWEAKS")
+    print("")
+    print("ERROR: Could not download index.txt.")
+    print("")
+    print("Check that HTTP is enabled.")
+
+    error("Could not download index.txt")
+
 end
+
 
 local indexData = response.readAll()
 
 response.close()
 
+
 local songNames =
     textutils.unserialize(indexData)
 
+
 if not songNames then
-    error(
-        "index.txt no tiene un formato valido"
-    )
+
+    error("Invalid index.txt")
+
 end
 
 
 -- ============================================================
--- CREAR LISTA DE CANCIONES
+-- SONG LIST
 -- ============================================================
 
 local songs = {}
+
 
 for _, name in ipairs(songNames) do
 
@@ -105,7 +135,7 @@ for _, name in ipairs(songNames) do
         {
             name = name,
 
-            fn = function()
+            load = function()
 
                 local encodedName =
                     name:gsub(
@@ -120,23 +150,25 @@ for _, name in ipairs(songNames) do
                     .. encodedName
                     .. ".dfpwm"
 
-                local songResponse =
-                    http.get(url)
 
-                if not songResponse then
+                local r = http.get(url)
+
+
+                if not r then
 
                     error(
-                        "No se pudo descargar: "
+                        "Could not download "
                         .. name
                         .. ".dfpwm"
                     )
 
                 end
 
-                local data =
-                    songResponse.readAll()
 
-                songResponse.close()
+                local data =
+                    r.readAll()
+
+                r.close()
 
                 return data
 
@@ -147,600 +179,1077 @@ for _, name in ipairs(songNames) do
 end
 
 
--- ============================================================
--- ESTADO
--- ============================================================
+if #songs == 0 then
 
-local savedName =
-    settings.get(
-        "currentSong",
-        nil
-    )
+    error("No songs found in index.txt")
+
+end
+
+
+-- ============================================================
+-- STATE
+-- ============================================================
 
 local currentSong = nil
 
+local playing = false
 
-if savedName then
+local shuffle = false
 
-    for _, song in ipairs(songs) do
+local loopMode = 0
 
-        if song.name == savedName then
-
-            currentSong = song
-
-            break
-
-        end
-
-    end
-
-end
-
-
-local playing =
-    settings.get(
-        "playing",
-        false
-    )
-
-
-local shuffle =
-    settings.get(
-        "shuffle",
-        true
-    )
-
-
-local loopMode =
-    settings.get(
-        "loopMode",
-        0
-    )
-
--- 0 = Off
--- 1 = All
--- 2 = One
-
+-- 0 = OFF
+-- 1 = ALL
+-- 2 = ONE
 
 local volume = 0.35
 
-local stopFlag = false
+local currentPage = 1
+
+local status = "READY"
+
+local stopPlayback = false
+
+local playbackToken = 0
 
 
 -- ============================================================
--- PANTALLA
+-- SCREEN LAYOUT
 -- ============================================================
 
-local width, height =
-    term.getSize()
+local HEADER = 5
+
+local FOOTER = 7
+
+local SONG_FIRST = HEADER + 1
+
+local SONG_LAST =
+    H - FOOTER
 
 
-local topRows = 2
-
-local bottomRows = 5
-
-
-local songsPerPage =
-    height
-    - topRows
-    - bottomRows
-
-
-if songsPerPage < 1 then
-    songsPerPage = 1
-end
-
-
-local currentPage =
-    settings.get(
-        "currentPage",
-        1
+local SONGS_PER_PAGE =
+    math.max(
+        1,
+        SONG_LAST - SONG_FIRST + 1
     )
 
 
 -- ============================================================
--- BOTONES
+-- BUTTONS
 -- ============================================================
 
 local buttons = {}
 
 
 -- ============================================================
--- PAGINAS
+-- PAGE COUNT
 -- ============================================================
 
-local function totalPages()
+local function pageCount()
 
     return math.max(
         1,
         math.ceil(
             #songs /
-            songsPerPage
+            SONGS_PER_PAGE
         )
     )
 
 end
 
 
-if currentPage < 1 then
-    currentPage = 1
-end
-
-
-if currentPage > totalPages() then
-    currentPage = totalPages()
-end
-
-
 -- ============================================================
--- GUARDAR CONFIGURACION
+-- SAFE SPEAKER STOP
 -- ============================================================
 
-local function saveSettings()
+local function stopSpeakers()
 
-    settings.set(
-        "currentPage",
-        currentPage
-    )
+    for _, speaker in ipairs(speakers) do
 
-    settings.set(
-        "loopMode",
-        loopMode
-    )
-
-    settings.set(
-        "shuffle",
-        shuffle
-    )
-
-    settings.set(
-        "playing",
-        playing
-    )
-
-
-    if currentSong then
-
-        settings.set(
-            "currentSong",
-            currentSong.name
-        )
-
-    else
-
-        settings.unset(
-            "currentSong"
+        pcall(
+            function()
+                speaker.stop()
+            end
         )
 
     end
 
+end
 
-    settings.save()
+
+-- ============================================================
+-- BUTTON DRAW
+-- ============================================================
+
+local function addButton(
+    x1,
+    x2,
+    y,
+    text,
+    action,
+    background,
+    foreground
+)
+
+    if x1 < 1 then
+        x1 = 1
+    end
+
+    if x2 > W then
+        x2 = W
+    end
+
+
+    table.insert(
+        buttons,
+        {
+            x1 = x1,
+            x2 = x2,
+            y1 = y,
+            y2 = y,
+
+            action = action
+        }
+    )
+
+
+    term.setCursorPos(
+        x1,
+        y
+    )
+
+
+    term.setBackgroundColor(
+        background or PANEL
+    )
+
+    term.setTextColor(
+        foreground or TEXT
+    )
+
+
+    local available =
+        x2 - x1 + 1
+
+
+    local output =
+        text
+
+
+    if #output > available then
+
+        output =
+            output:sub(
+                1,
+                available
+            )
+
+    end
+
+
+    if #output < available then
+
+        output =
+            output
+            .. string.rep(
+                " ",
+                available - #output
+            )
+
+    end
+
+
+    term.write(
+        output
+    )
 
 end
 
 
 -- ============================================================
--- DIBUJAR INTERFAZ
+-- CENTERED TEXT
+-- ============================================================
+
+local function centerText(
+    text,
+    y,
+    color
+)
+
+    local x =
+        math.floor(
+            (W - #text) / 2
+        ) + 1
+
+
+    if x < 1 then
+        x = 1
+    end
+
+
+    term.setCursorPos(
+        x,
+        y
+    )
+
+    term.setTextColor(
+        color or TEXT
+    )
+
+    term.write(
+        text
+    )
+
+end
+
+
+-- ============================================================
+-- DRAW UI
 -- ============================================================
 
 local function drawUI()
 
-    term.redirect(
-        computerTerm
-    )
+    term.redirect(screen)
+
+    buttons = {}
+
 
     term.setBackgroundColor(
-        colors.black
+        BG
     )
 
     term.setTextColor(
-        colors.white
+        TEXT
     )
 
     term.clear()
 
 
-    -- --------------------------------------------------------
-    -- NOW PLAYING
-    -- --------------------------------------------------------
+    -- ========================================================
+    -- HEADER
+    -- ========================================================
 
-    term.setCursorPos(
-        2,
-        1
+    term.setBackgroundColor(
+        ACTIVE
     )
 
     term.setTextColor(
-        colors.white
+        TEXT
+    )
+
+    term.setCursorPos(
+        1,
+        1
     )
 
     term.write(
-        "Now Playing: "
-        ..
-        (
-            currentSong
-            and currentSong.name
-            or "(none)"
+        string.rep(
+            " ",
+            W
         )
     )
 
 
-    -- --------------------------------------------------------
-    -- CANCIONES
-    -- --------------------------------------------------------
+    centerText(
+        "MUSIC TWEAKS",
+        1,
+        TEXT
+    )
 
-    local startIdx =
-        (currentPage - 1)
-        * songsPerPage
+
+    term.setBackgroundColor(
+        BG
+    )
+
+
+    -- ========================================================
+    -- NOW PLAYING
+    -- ========================================================
+
+    term.setCursorPos(
+        2,
+        2
+    )
+
+    term.setTextColor(
+        DIM
+    )
+
+    term.write(
+        "NOW PLAYING"
+    )
+
+
+    local songTitle =
+        currentSong
+        and currentSong.name
+        or "Nothing"
+
+
+    term.setCursorPos(
+        2,
+        3
+    )
+
+    term.setTextColor(
+        ACCENT
+    )
+
+
+    local maxTitle =
+        W - 2
+
+
+    if #songTitle > maxTitle then
+
+        songTitle =
+            songTitle:sub(
+                1,
+                maxTitle - 3
+            )
+            .. "..."
+
+    end
+
+
+    term.write(
+        songTitle
+    )
+
+
+    -- ========================================================
+    -- STATUS
+    -- ========================================================
+
+    term.setCursorPos(
+        2,
+        4
+    )
+
+    if playing then
+
+        term.setTextColor(
+            GREEN
+        )
+
+        term.write(
+            "● PLAYING"
+        )
+
+    else
+
+        term.setTextColor(
+            DIM
+        )
+
+        term.write(
+            "● "
+            .. status
+        )
+
+    end
+
+
+    -- ========================================================
+    -- PLAYLIST HEADER
+    -- ========================================================
+
+    term.setCursorPos(
+        1,
+        SONG_FIRST
+    )
+
+    term.setBackgroundColor(
+        PANEL
+    )
+
+    term.setTextColor(
+        TEXT
+    )
+
+    term.write(
+        " PLAYLIST"
+        .. string.rep(
+            " ",
+            math.max(
+                0,
+                W - 9
+            )
+        )
+    )
+
+
+    -- ========================================================
+    -- SONG LIST
+    -- ========================================================
+
+    local listStart =
+        SONG_FIRST + 1
+
+
+    local listEnd =
+        SONG_LAST
+
+
+    local startIndex =
+        (
+            currentPage - 1
+        )
+        * SONGS_PER_PAGE
         + 1
 
 
-    local y = 3
-
-
-    for i = startIdx,
-        math.min(
-            startIdx
-            + songsPerPage
-            - 1,
-            #songs
-        )
+    for y = listStart,
+        listEnd
     do
 
+        local index =
+            startIndex
+            + (
+                y - listStart
+            )
+
+
         term.setCursorPos(
-            2,
+            1,
             y
         )
 
 
-        if currentSong
-            == songs[i]
-        then
+        if index <= #songs then
 
-            term.setTextColor(
-                colors.yellow
-            )
-
-        else
-
-            term.setTextColor(
-                colors.white
-            )
-
-        end
+            local song =
+                songs[index]
 
 
-        term.write(
-            songs[i].name
-        )
+            local selected =
+                song ==
+                currentSong
 
 
-        y = y + 1
-
-    end
-
-
-    -- --------------------------------------------------------
-    -- BOTONES
-    -- --------------------------------------------------------
-
-    buttons = {}
-
-
-    local loopName =
-        ({
-            [0] = "Off",
-            [1] = "All",
-            [2] = "One"
-        })[loopMode]
-
-
-    local btnLines = {
-
-        {
-            "Shuffle: "
-            ..
-            (
-                shuffle
-                and "On"
-                or "Off"
-            ),
-
-            "Loop: "
-            ..
-            loopName
-        },
-
-
-        {
-            "Page "
-            ..
-            currentPage
-            ..
-            "/"
-            ..
-            totalPages(),
-
-            "Prev",
-
-            "Next"
-        },
-
-
-        {
-            (
-                playing
-                and "Playing"
-                or "Stopped"
-            ),
-
-            "Skip"
-        },
-
-
-        {
-            "-",
-
-            "Volume: "
-            ..
-            math.floor(
-                volume * 100
-            )
-            ..
-            "%",
-
-            "+"
-        }
-
-    }
-
-
-    local startY =
-        height
-        - bottomRows
-        + 1
-
-
-    for lineIndex,
-        line
-        in ipairs(btnLines)
-    do
-
-        local x = 2
-
-        local buttonY =
-            startY
-            + lineIndex
-            - 1
-
-
-        for _, text
-            in ipairs(line)
-        do
-
-            if text ~= "" then
-
-                local x1 = x
-
-                local x2 =
-                    x1
-                    + #text
-                    + 1
-
-
-                -- Dibujar botón
-
-                term.setCursorPos(
-                    x1,
-                    buttonY
-                )
+            if selected then
 
                 term.setBackgroundColor(
-                    colors.gray
+                    ACTIVE
                 )
 
                 term.setTextColor(
-                    colors.white
+                    TEXT
                 )
 
-                term.write(
-                    " "
-                    ..
-                    text
-                    ..
-                    " "
+            else
+
+                term.setBackgroundColor(
+                    BG
                 )
 
-
-                -- Guardar coordenadas
-
-                table.insert(
-                    buttons,
-                    {
-                        text = text,
-
-                        x1 = x1,
-                        x2 = x2,
-
-                        y1 = buttonY,
-                        y2 = buttonY
-                    }
+                term.setTextColor(
+                    TEXT
                 )
-
-
-                x =
-                    x2 + 2
 
             end
+
+
+            local prefix
+
+            if selected then
+
+                prefix = "> "
+
+            else
+
+                prefix = "  "
+
+            end
+
+
+            local number =
+                string.format(
+                    "%02d",
+                    index
+                )
+
+
+            local text =
+                prefix
+                .. number
+                .. " "
+                .. song.name
+
+
+            if #text > W then
+
+                text =
+                    text:sub(
+                        1,
+                        W - 3
+                    )
+                    .. "..."
+
+            end
+
+
+            if #text < W then
+
+                text =
+                    text
+                    .. string.rep(
+                        " ",
+                        W - #text
+                    )
+
+            end
+
+
+            term.write(
+                text
+            )
+
+
+        else
+
+            term.setBackgroundColor(
+                BG
+            )
+
+            term.setTextColor(
+                TEXT
+            )
+
+            term.write(
+                string.rep(
+                    " ",
+                    W
+                )
+            )
 
         end
 
     end
 
 
-    term.setBackgroundColor(
+    -- ========================================================
+    -- FOOTER CONTROLS
+    -- ========================================================
+
+    local yPlay =
+        H - 6
+
+    local yMode =
+        H - 5
+
+    local yVolume =
+        H - 4
+
+    local yPages =
+        H - 2
+
+
+    -- ========================================================
+    -- PLAY / STOP / NEXT
+    -- ========================================================
+
+    local third =
+        math.floor(
+            W / 3
+        )
+
+
+    addButton(
+        1,
+        third,
+        yPlay,
+
+        playing
+        and "[ PAUSE ]"
+        or "[ PLAY ]",
+
+        "play",
+
+        playing
+        and GREEN
+        or ACTIVE,
+
         colors.black
+    )
+
+
+    addButton(
+        third + 1,
+        third * 2,
+        yPlay,
+
+        "[ STOP ]",
+
+        "stop",
+
+        RED,
+
+        colors.white
+    )
+
+
+    addButton(
+        third * 2 + 1,
+        W,
+        yPlay,
+
+        "[ NEXT >> ]",
+
+        "next",
+
+        ACTIVE,
+
+        colors.white
+    )
+
+
+    -- ========================================================
+    -- SHUFFLE / LOOP
+    -- ========================================================
+
+    local half =
+        math.floor(
+            W / 2
+        )
+
+
+    addButton(
+        1,
+        half,
+        yMode,
+
+        shuffle
+        and "[ SHUFFLE: ON ]"
+        or "[ SHUFFLE: OFF ]",
+
+        "shuffle",
+
+        shuffle
+        and GREEN
+        or PANEL,
+
+        shuffle
+        and colors.black
+        or TEXT
+    )
+
+
+    local loopText
+
+    if loopMode == 0 then
+
+        loopText =
+            "[ LOOP: OFF ]"
+
+    elseif loopMode == 1 then
+
+        loopText =
+            "[ LOOP: ALL ]"
+
+    else
+
+        loopText =
+            "[ LOOP: ONE ]"
+
+    end
+
+
+    addButton(
+        half + 1,
+        W,
+        yMode,
+
+        loopText,
+
+        "loop",
+
+        loopMode ~= 0
+        and PURPLE
+        or PANEL,
+
+        colors.white
+    )
+
+
+    -- ========================================================
+    -- VOLUME
+    -- ========================================================
+
+    local volumePercent =
+        math.floor(
+            volume * 100
+        )
+
+
+    local barSize =
+        math.max(
+            5,
+            W - 18
+        )
+
+
+    local filled =
+        math.floor(
+            barSize
+            * volume
+        )
+
+
+    local empty =
+        barSize
+        - filled
+
+
+    local volumeBar =
+        string.rep(
+            "#",
+            filled
+        )
+        ..
+        string.rep(
+            "-",
+            empty
+        )
+
+
+    addButton(
+        1,
+        math.floor(
+            W / 5
+        ),
+        yVolume,
+
+        "[ VOL- ]",
+
+        "volumeDown",
+
+        PANEL,
+
+        TEXT
+    )
+
+
+    term.setCursorPos(
+        math.floor(
+            W / 5
+        ) + 1,
+        yVolume
+    )
+
+    term.setBackgroundColor(
+        BG
+    )
+
+    term.setTextColor(
+        ACCENT
+    )
+
+
+    local middleStart =
+        math.floor(
+            W / 5
+        ) + 1
+
+
+    local middleEnd =
+        math.floor(
+            W * 4 / 5
+        )
+
+
+    local volumeText =
+        "VOL "
+        .. volumePercent
+        .. "% "
+        .. volumeBar
+
+
+    if #volumeText >
+        (
+            middleEnd
+            - middleStart
+            + 1
+        )
+    then
+
+        volumeText =
+            volumeText:sub(
+                1,
+                middleEnd
+                - middleStart
+                + 1
+            )
+
+    end
+
+
+    term.write(
+        volumeText
+    )
+
+
+    addButton(
+        math.floor(
+            W * 4 / 5
+        ) + 1,
+        W,
+        yVolume,
+
+        "[ VOL+ ]",
+
+        "volumeUp",
+
+        PANEL,
+
+        TEXT
+    )
+
+
+    -- ========================================================
+    -- PAGE CONTROLS
+    -- ========================================================
+
+    local pages =
+        pageCount()
+
+
+    addButton(
+        1,
+        math.floor(
+            W / 3
+        ),
+        yPages,
+
+        "[ << PAGE ]",
+
+        "pagePrevious",
+
+        PANEL,
+
+        TEXT
+    )
+
+
+    centerText(
+        "PAGE "
+        .. currentPage
+        .. "/"
+        .. pages,
+
+        yPages,
+
+        ACCENT
+    )
+
+
+    addButton(
+        math.floor(
+            W * 2 / 3
+        ) + 1,
+        W,
+        yPages,
+
+        "[ PAGE >> ]",
+
+        "pageNext",
+
+        PANEL,
+
+        TEXT
+    )
+
+
+    term.setBackgroundColor(
+        BG
     )
 
 end
 
 
 -- ============================================================
--- REPRODUCCION
+-- PLAYBACK
 -- ============================================================
 
-local function playerLoop()
+local function playSong(song, token)
 
-    while true do
-
-        if currentSong
-            and playing
-        then
-
-            local songData =
-                currentSong.fn()
+    if not song then
+        return
+    end
 
 
-            local dataLength =
-                #songData
+    status = "LOADING"
+
+    drawUI()
 
 
-            for i = 1,
-                dataLength,
-                16 * 1024
-            do
-
-                if stopFlag then
-                    break
-                end
+    local ok, data =
+        pcall(
+            song.load
+        )
 
 
-                local chunk =
-                    songData:sub(
-                        i,
-                        math.min(
-                            i
-                            + 16 * 1024
-                            - 1,
-                            dataLength
-                        )
-                    )
+    if token ~= playbackToken then
+        return
+    end
 
 
-                local buffer =
-                    decoder(chunk)
+    if not ok then
+
+        playing = false
+
+        status = "DOWNLOAD ERROR"
+
+        drawUI()
+
+        return
+
+    end
 
 
-                local pending = {}
+    status = "PLAYING"
+
+    drawUI()
 
 
-                for _, speaker
-                    in ipairs(speakers)
-                do
-
-                    if stopFlag then
-                        break
-                    end
+    local decoder =
+        dfpwm.make_decoder()
 
 
-                    if not speaker.playAudio(
-                        buffer,
-                        volume
-                    )
-                    then
-
-                        pending[
-                            peripheral.getName(
-                                speaker
-                            )
-                        ] = speaker
-
-                    end
-
-                end
+    local dataLength =
+        #data
 
 
-                while
-                    not stopFlag
-                    and next(pending)
-                do
+    for position = 1,
+        dataLength,
+        16 * 1024
+    do
 
-                    local event,
-                        speakerName =
-                        os.pullEvent(
-                            "speaker_audio_empty"
-                        )
+        -- ====================================================
+        -- CANCEL CHECK
+        -- ====================================================
 
+        if token ~= playbackToken then
 
-                    local speaker =
-                        pending[
-                            speakerName
-                        ]
+            return
+
+        end
 
 
-                    if speaker
-                        and speaker.playAudio(
-                            buffer,
-                            volume
-                        )
-                    then
+        if not playing then
 
-                        pending[
-                            speakerName
-                        ] = nil
+            return
 
-                    end
+        end
 
-                end
 
+        local chunk =
+            data:sub(
+                position,
+                math.min(
+                    position
+                    + 16 * 1024
+                    - 1,
+                    dataLength
+                )
+            )
+
+
+        local buffer =
+            decoder(
+                chunk
+            )
+
+
+        -- ====================================================
+        -- SEND TO SPEAKERS
+        -- ====================================================
+
+        for _, speaker
+            in ipairs(speakers)
+        do
+
+            if token ~= playbackToken then
+                return
             end
 
 
-            -- ------------------------------------------------
-            -- FIN DE CANCION
-            -- ------------------------------------------------
-
-            if stopFlag then
-
-                stopFlag = false
-
-            else
-
-                -- LOOP ONE
-
-                if loopMode == 2 then
-
-                    -- No cambiar canción.
+            local sent = false
 
 
-                -- SHUFFLE
+            while not sent do
 
-                elseif shuffle then
-
-                    currentSong =
-                        songs[
-                            math.random(
-                                #songs
-                            )
-                        ]
+                if token ~= playbackToken then
+                    return
+                end
 
 
-                -- LOOP ALL
-
-                elseif loopMode == 1 then
-
-                    local index = 1
+                if not playing then
+                    return
+                end
 
 
-                    for i, song
-                        in ipairs(songs)
-                    do
+                sent =
+                    speaker.playAudio(
+                        buffer,
+                        volume
+                    )
 
-                        if song
-                            == currentSong
+
+                if not sent then
+
+                    -- IMPORTANT:
+                    --
+                    -- No hacemos un os.pullEvent
+                    -- esperando eternamente a
+                    -- speaker_audio_empty.
+                    --
+                    -- Comprobamos periódicamente
+                    -- si se ha solicitado cambio
+                    -- de canción.
+
+                    local timer =
+                        os.startTimer(
+                            0.03
+                        )
+
+
+                    while true do
+
+                        local event,
+                            a =
+                            os.pullEvent()
+
+
+                        if token
+                            ~= playbackToken
                         then
 
-                            index = i
+                            return
+
+                        end
+
+
+                        if not playing then
+
+                            return
+
+                        end
+
+
+                        if event ==
+                            "speaker_audio_empty"
+                        then
+
+                            break
+
+                        end
+
+
+                        if event ==
+                            "timer"
+                            and a == timer
+                        then
 
                             break
 
@@ -748,27 +1257,107 @@ local function playerLoop()
 
                     end
 
+                end
 
-                    currentSong =
-                        songs[
-                            index
-                            % #songs
-                            + 1
-                        ]
+            end
+
+        end
+
+    end
+
+end
 
 
-                -- NORMAL
+-- ============================================================
+-- PLAYBACK LOOP
+-- ============================================================
+
+local function playbackLoop()
+
+    while true do
+
+        if playing
+            and currentSong
+        then
+
+            local token =
+                playbackToken
+
+
+            local song =
+                currentSong
+
+
+            playSong(
+                song,
+                token
+            )
+
+
+            -- =================================================
+            -- SONG CANCELLED
+            -- =================================================
+
+            if token
+                ~= playbackToken
+            then
+
+                -- Do nothing.
+
+            elseif not playing then
+
+                -- Paused/stopped.
+
+            else
+
+                -- =================================================
+                -- SONG FINISHED
+                -- =================================================
+
+                if loopMode == 2 then
+
+                    -- LOOP ONE
+                    -- Same song.
+
+
+                elseif shuffle then
+
+                    -- SHUFFLE
+
+                    if #songs > 1 then
+
+                        local newIndex
+
+                        repeat
+
+                            newIndex =
+                                math.random(
+                                    #songs
+                                )
+
+                        until
+                            songs[newIndex]
+                            ~= currentSong
+
+
+                        currentSong =
+                            songs[newIndex]
+
+                    end
+
 
                 else
+
+                    -- NORMAL / LOOP ALL
 
                     local index = 1
 
 
-                    for i, song
+                    for i, songItem
                         in ipairs(songs)
                     do
 
-                        if song
+                        if songItem
                             == currentSong
                         then
 
@@ -788,24 +1377,27 @@ local function playerLoop()
                                 index + 1
                             ]
 
+                    elseif loopMode == 1 then
+
+                        currentSong =
+                            songs[1]
+
                     else
 
                         currentSong = nil
 
                         playing = false
 
+                        status = "FINISHED"
+
                     end
 
                 end
 
 
-                saveSettings()
+                drawUI()
 
             end
-
-
-            drawUI()
-
 
         else
 
@@ -821,7 +1413,347 @@ end
 
 
 -- ============================================================
--- RATON DEL ORDENADOR
+-- BUTTON ACTION
+-- ============================================================
+
+local function buttonAction(action)
+
+    -- ========================================================
+    -- PLAY / PAUSE
+    -- ========================================================
+
+    if action == "play" then
+
+        if not currentSong then
+
+            status =
+                "SELECT A SONG"
+
+        elseif playing then
+
+            playing = false
+
+            playbackToken =
+                playbackToken + 1
+
+            stopSpeakers()
+
+            status =
+                "PAUSED"
+
+        else
+
+            playing = true
+
+            playbackToken =
+                playbackToken + 1
+
+            status =
+                "PLAYING"
+
+        end
+
+
+    -- ========================================================
+    -- STOP
+    -- ========================================================
+
+    elseif action == "stop" then
+
+        playing = false
+
+        playbackToken =
+            playbackToken + 1
+
+        stopSpeakers()
+
+        status =
+            "STOPPED"
+
+
+    -- ========================================================
+    -- NEXT
+    -- ========================================================
+
+    elseif action == "next" then
+
+        if #songs > 0 then
+
+            local index = 1
+
+
+            if currentSong then
+
+                for i, song in ipairs(songs) do
+
+                    if song ==
+                        currentSong
+                    then
+
+                        index = i
+
+                        break
+
+                    end
+
+                end
+
+            end
+
+
+            if shuffle
+                and #songs > 1
+            then
+
+                local newIndex
+
+                repeat
+
+                    newIndex =
+                        math.random(
+                            #songs
+                        )
+
+                until
+                    songs[newIndex]
+                    ~= currentSong
+
+
+                currentSong =
+                    songs[newIndex]
+
+            else
+
+                if index < #songs then
+
+                    currentSong =
+                        songs[index + 1]
+
+                elseif loopMode == 1 then
+
+                    currentSong =
+                        songs[1]
+
+                else
+
+                    currentSong =
+                        songs[1]
+
+                end
+
+            end
+
+
+            -- ================================================
+            -- IMPORTANT FIX
+            -- ================================================
+
+            playbackToken =
+                playbackToken + 1
+
+            stopSpeakers()
+
+            playing = true
+
+            status =
+                "LOADING"
+
+        end
+
+
+    -- ========================================================
+    -- PREVIOUS
+    -- ========================================================
+
+    elseif action == "previous" then
+
+        if #songs > 0 then
+
+            local index = 1
+
+
+            if currentSong then
+
+                for i, song in ipairs(songs) do
+
+                    if song ==
+                        currentSong
+                    then
+
+                        index = i
+
+                        break
+
+                    end
+
+                end
+
+            end
+
+
+            if index > 1 then
+
+                currentSong =
+                    songs[index - 1]
+
+            else
+
+                currentSong =
+                    songs[#songs]
+
+            end
+
+
+            playbackToken =
+                playbackToken + 1
+
+            stopSpeakers()
+
+            playing = true
+
+            status =
+                "LOADING"
+
+        end
+
+
+    -- ========================================================
+    -- SHUFFLE
+    -- ========================================================
+
+    elseif action == "shuffle" then
+
+        shuffle =
+            not shuffle
+
+
+        status =
+            shuffle
+            and "SHUFFLE ON"
+            or "SHUFFLE OFF"
+
+
+    -- ========================================================
+    -- LOOP
+    -- ========================================================
+
+    elseif action == "loop" then
+
+        loopMode =
+            (
+                loopMode + 1
+            ) % 3
+
+
+        if loopMode == 0 then
+
+            status =
+                "LOOP OFF"
+
+        elseif loopMode == 1 then
+
+            status =
+                "LOOP ALL"
+
+        else
+
+            status =
+                "LOOP ONE"
+
+        end
+
+
+    -- ========================================================
+    -- VOLUME DOWN
+    -- ========================================================
+
+    elseif action == "volumeDown" then
+
+        volume =
+            math.max(
+                0,
+                volume - 0.05
+            )
+
+
+        status =
+            "VOLUME "
+            .. math.floor(
+                volume * 100
+            )
+            .. "%"
+
+
+    -- ========================================================
+    -- VOLUME UP
+    -- ========================================================
+
+    elseif action == "volumeUp" then
+
+        volume =
+            math.min(
+                1,
+                volume + 0.05
+            )
+
+
+        status =
+            "VOLUME "
+            .. math.floor(
+                volume * 100
+            )
+            .. "%"
+
+
+    -- ========================================================
+    -- PAGE PREVIOUS
+    -- ========================================================
+
+    elseif action == "pagePrevious" then
+
+        if currentPage > 1 then
+
+            currentPage =
+                currentPage - 1
+
+        end
+
+
+        status =
+            "PAGE "
+            .. currentPage
+
+
+    -- ========================================================
+    -- PAGE NEXT
+    -- ========================================================
+
+    elseif action == "pageNext" then
+
+        if currentPage <
+            pageCount()
+        then
+
+            currentPage =
+                currentPage + 1
+
+        end
+
+
+        status =
+            "PAGE "
+            .. currentPage
+
+    end
+
+
+    drawUI()
+
+end
+
+
+-- ============================================================
+-- MOUSE INPUT
 -- ============================================================
 
 local function inputLoop()
@@ -831,17 +1763,8 @@ local function inputLoop()
 
     while true do
 
-        -- ====================================================
-        -- ESTA ES LA PARTE IMPORTANTE
-        --
-        -- NO monitor_touch
-        -- NO monitor
-        -- NO eventos genéricos
-        --
-        -- El ordenador recibe mouse_click.
-        -- ====================================================
-
-        local button,
+        local event,
+            button,
             x,
             y =
             os.pullEvent(
@@ -849,15 +1772,13 @@ local function inputLoop()
             )
 
 
-        -- Solo botón izquierdo
-
         if button == 1 then
 
             local handled = false
 
 
             -- =================================================
-            -- BOTONES
+            -- BUTTONS
             -- =================================================
 
             for _, btn
@@ -874,186 +1795,10 @@ local function inputLoop()
                     handled = true
 
 
-                    -- -----------------------------------------
-                    -- SHUFFLE
-                    -- -----------------------------------------
-
-                    if btn.text:find(
-                        "Shuffle"
+                    buttonAction(
+                        btn.action
                     )
-                    then
 
-                        shuffle =
-                            not shuffle
-
-
-                    -- -----------------------------------------
-                    -- LOOP
-                    -- -----------------------------------------
-
-                    elseif btn.text:find(
-                        "Loop"
-                    )
-                    then
-
-                        loopMode =
-                            (
-                                loopMode
-                                + 1
-                            ) % 3
-
-
-                    -- -----------------------------------------
-                    -- PREV
-                    -- -----------------------------------------
-
-                    elseif btn.text == "Prev" then
-
-                        if currentPage > 1 then
-
-                            currentPage =
-                                currentPage - 1
-
-                        end
-
-
-                    -- -----------------------------------------
-                    -- NEXT
-                    -- -----------------------------------------
-
-                    elseif btn.text == "Next" then
-
-                        if currentPage
-                            < totalPages()
-                        then
-
-                            currentPage =
-                                currentPage + 1
-
-                        end
-
-
-                    -- -----------------------------------------
-                    -- PLAY / STOP
-                    -- -----------------------------------------
-
-                    elseif
-                        btn.text == "Playing"
-                        or
-                        btn.text == "Stopped"
-                    then
-
-                        if playing then
-
-                            stopFlag = true
-
-                            playing = false
-
-                        else
-
-                            if currentSong then
-
-                                playing = true
-
-                            end
-
-                        end
-
-
-                    -- -----------------------------------------
-                    -- SKIP
-                    -- -----------------------------------------
-
-                    elseif btn.text == "Skip" then
-
-                        if #songs > 0 then
-
-                            local index = 1
-
-
-                            if currentSong then
-
-                                for i, song
-                                    in ipairs(songs)
-                                do
-
-                                    if song
-                                        == currentSong
-                                    then
-
-                                        index = i
-
-                                        break
-
-                                    end
-
-                                end
-
-                            end
-
-
-                            if shuffle then
-
-                                currentSong =
-                                    songs[
-                                        math.random(
-                                            #songs
-                                        )
-                                    ]
-
-                            elseif index < #songs then
-
-                                currentSong =
-                                    songs[
-                                        index + 1
-                                    ]
-
-                            else
-
-                                currentSong =
-                                    songs[1]
-
-                            end
-
-
-                            stopFlag = true
-
-                            playing = true
-
-                        end
-
-
-                    -- -----------------------------------------
-                    -- VOLUMEN -
-                    -- -----------------------------------------
-
-                    elseif btn.text == "-" then
-
-                        volume =
-                            math.max(
-                                0,
-                                volume - 0.05
-                            )
-
-
-                    -- -----------------------------------------
-                    -- VOLUMEN +
-                    -- -----------------------------------------
-
-                    elseif btn.text == "+" then
-
-                        volume =
-                            math.min(
-                                1,
-                                volume + 0.05
-                            )
-
-                    end
-
-
-                    saveSettings()
-
-                    drawUI()
 
                     break
 
@@ -1063,55 +1808,52 @@ local function inputLoop()
 
 
             -- =================================================
-            -- LISTA DE CANCIONES
+            -- SONG CLICK
             -- =================================================
 
-            if not handled then
+            if not handled
+                and y >= SONG_FIRST + 1
+                and y <= SONG_LAST
+            then
 
-                local startIdx =
-                    (currentPage - 1)
-                    * songsPerPage
+                local startIndex =
+                    (
+                        currentPage - 1
+                    )
+                    * SONGS_PER_PAGE
                     + 1
 
 
-                for i = startIdx,
-                    math.min(
-                        startIdx
-                        + songsPerPage
-                        - 1,
-                        #songs
-                    )
-                do
-
-                    local row =
-                        3
-                        + (
-                            i
-                            - startIdx
+                local index =
+                    startIndex
+                    + (
+                        y
+                        - (
+                            SONG_FIRST + 1
                         )
+                    )
 
 
-                    if y == row then
+                if index >= 1
+                    and index <= #songs
+                then
 
-                        currentSong =
-                            songs[i]
-
-
-                        stopFlag = true
-
-                        playing = true
+                    currentSong =
+                        songs[index]
 
 
-                        saveSettings()
+                    playbackToken =
+                        playbackToken + 1
 
-                        drawUI()
+                    stopSpeakers()
+
+                    playing = true
+
+                    status =
+                        "LOADING"
 
 
-                        handled = true
-
-                        break
-
-                    end
+                    drawUI()
 
                 end
 
@@ -1125,13 +1867,13 @@ end
 
 
 -- ============================================================
--- ARRANCAR
+-- START
 -- ============================================================
 
 drawUI()
 
 
 parallel.waitForAny(
-    playerLoop,
+    playbackLoop,
     inputLoop
 )
