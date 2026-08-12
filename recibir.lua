@@ -1,14 +1,16 @@
 -- ============================================================
--- MUSIC TWEAKS
--- AUDIO RECEIVER
+-- MUSIC TWEAKS - RECEIVER
 -- ============================================================
+
+local REPO =
+    "alphaddiction/musictweaks"
 
 local PROTOCOL =
     "musictweaks"
 
 
 -- ============================================================
--- WIRELESS MODEM
+-- MODEM
 -- ============================================================
 
 local modem =
@@ -19,15 +21,11 @@ local modem =
         end
     )
 
-
 if not modem then
-
     error(
-        "No wireless modem found."
+        "No se encontro un modem inalambrico."
     )
-
 end
-
 
 rednet.open(
     peripheral.getName(
@@ -37,23 +35,30 @@ rednet.open(
 
 
 -- ============================================================
--- DFPWM
+-- SPEAKER
 -- ============================================================
 
-local dfpwm =
-    require("cc.audio.dfpwm")
+local speakers = {
+    peripheral.find(
+        "speaker"
+    )
+}
+
+if #speakers == 0 then
+    error(
+        "No se encontro ningun speaker."
+    )
+end
 
 
 -- ============================================================
--- ZONE NAME
+-- ZONA
 -- ============================================================
 
 local zoneName =
     settings.get(
-        "musictweaks.zoneName",
-        nil
+        "musictweaks.zoneName"
     )
-
 
 if not zoneName then
 
@@ -65,23 +70,10 @@ if not zoneName then
     )
 
     print(
-        "================================"
-    )
-
-    print(
-        "       MUSIC TWEAKS"
-    )
-
-    print(
-        "        AUDIO RECEIVER"
-    )
-
-    print(
-        "================================"
+        "MUSIC TWEAKS RECEIVER"
     )
 
     print("")
-
     print(
         "Nombre de esta zona:"
     )
@@ -92,22 +84,15 @@ if not zoneName then
 
     print("")
 
-    write(
-        "> "
-    )
-
+    write("> ")
 
     zoneName =
         read()
 
-
     if zoneName == "" then
-
         zoneName =
             "RECEIVER"
-
     end
-
 
     settings.set(
         "musictweaks.zoneName",
@@ -115,27 +100,6 @@ if not zoneName then
     )
 
     settings.save()
-
-end
-
-
--- ============================================================
--- SPEAKERS
--- ============================================================
-
-local speakers = {
-    peripheral.find(
-        "speaker"
-    )
-}
-
-
-if #speakers == 0 then
-
-    error(
-        "No speaker found."
-    )
-
 end
 
 
@@ -143,48 +107,23 @@ end
 -- STATE
 -- ============================================================
 
-local connected =
-    false
+local centralId = nil
 
+local connected = false
 
-local centralId =
-    nil
+local currentSong = nil
 
+local playing = false
 
-local playing =
-    false
+local paused = false
 
+local volume = 0.35
 
-local paused =
-    false
+local stopRequested = false
 
+local playRequest = nil
 
-local volume =
-    0.35
-
-
-local currentSong =
-    nil
-
-
-local currentSequence =
-    0
-
-
-local expectedSequence =
-    1
-
-
-local audioQueue =
-    {}
-
-
-local stopRequested =
-    false
-
-
-local decoder =
-    dfpwm.make_decoder()
+local playGeneration = 0
 
 
 -- ============================================================
@@ -210,7 +149,6 @@ local function drawUI(
         1
     )
 
-
     term.setTextColor(
         colors.cyan
     )
@@ -227,32 +165,27 @@ local function drawUI(
         "        AUDIO RECEIVER"
     )
 
+    print(
+        "================================"
+    )
 
     term.setTextColor(
         colors.white
     )
 
-    print(
-        "================================"
-    )
-
     print("")
-
 
     print(
         "ZONE: "
         .. zoneName
     )
 
-
     print(
-        "COMPUTER ID: "
+        "ID: "
         .. os.getComputerID()
     )
 
-
     print("")
-
 
     if connected then
 
@@ -273,9 +206,7 @@ local function drawUI(
         print(
             "● WAITING FOR CENTRAL"
         )
-
     end
-
 
     term.setTextColor(
         colors.white
@@ -283,22 +214,13 @@ local function drawUI(
 
     print("")
 
-
-    if currentSong then
-
-        print(
-            "SONG: "
-            .. currentSong
+    print(
+        "SONG: "
+        .. (
+            currentSong
+            or "---"
         )
-
-    else
-
-        print(
-            "SONG: ---"
-        )
-
-    end
-
+    )
 
     if playing then
 
@@ -329,16 +251,13 @@ local function drawUI(
         print(
             "● STOPPED"
         )
-
     end
-
 
     term.setTextColor(
         colors.white
     )
 
     print("")
-
 
     print(
         "VOLUME: "
@@ -348,35 +267,17 @@ local function drawUI(
         .. "%"
     )
 
-
-    print("")
-
-
-    print(
-        "BUFFER: "
-        .. #audioQueue
-    )
-
-
     if status then
 
         print("")
-
-        term.setTextColor(
-            colors.lightGray
-        )
-
-        print(
-            status
-        )
+        print(status)
 
     end
-
 end
 
 
 -- ============================================================
--- STOP SPEAKERS
+-- STOP
 -- ============================================================
 
 local function stopSpeakers()
@@ -387,232 +288,274 @@ local function stopSpeakers()
 
         pcall(
             function()
-
                 speaker.stop()
-
             end
         )
-
     end
-
 end
 
 
 -- ============================================================
--- CLEAR AUDIO
+-- DOWNLOAD SONG
 -- ============================================================
 
-local function clearAudio()
-
-    audioQueue =
-        {}
-
-    currentSequence =
-        0
-
-    expectedSequence =
-        1
-
-    stopSpeakers()
-
-end
-
-
--- ============================================================
--- SEND HELLO
--- ============================================================
-
-local function sendHello()
-
-    rednet.broadcast(
-
-        {
-            type =
-                "HELLO",
-
-            zone =
-                zoneName,
-
-            computerId =
-                os.getComputerID(),
-
-            speakers =
-                #speakers
-        },
-
-        PROTOCOL
-
-    )
-
-end
-
-
--- ============================================================
--- PLAY AUDIO BUFFER
--- ============================================================
-
-local function playBuffer(
-    encodedData,
-    bufferVolume
+local function downloadSong(
+    songName
 )
 
-    local buffer =
-        decoder(
-            encodedData
+    local encoded =
+        songName:gsub(
+            " ",
+            "%%20"
         )
 
+    local url =
+        "https://raw.githubusercontent.com/"
+        .. REPO
+        .. "/refs/heads/main/"
+        .. encoded
+        .. ".dfpwm"
 
-    local pending =
-        {}
+    local response =
+        http.get(url)
 
+    if not response then
 
-    for _, speaker
-        in ipairs(speakers)
-    do
-
-        if not speaker.playAudio(
-            buffer,
-            bufferVolume
-        )
-        then
-
-            pending[
-                peripheral.getName(
-                    speaker
-                )
-            ] =
-                speaker
-
-        end
+        return nil,
+            "No se pudo descargar "
+            .. songName
 
     end
 
+    local data =
+        response.readAll()
 
-    -- ========================================================
-    -- WAIT FOR SPEAKER
-    -- ========================================================
+    response.close()
 
-    while next(pending) do
-
-        local event,
-            name =
-            os.pullEvent()
-
-
-        if event ==
-            "speaker_audio_empty"
-        then
-
-            local speaker =
-                pending[name]
-
-
-            if speaker
-                and speaker.playAudio(
-                    buffer,
-                    bufferVolume
-                )
-            then
-
-                pending[name] =
-                    nil
-
-            end
-
-        elseif event ==
-            "rednet_message"
-        then
-
-            -- Do not let the receiver become completely
-            -- unresponsive to STOP while audio is playing.
-
-            -- The network listener will handle the actual
-            -- command in its own parallel process.
-
-        end
-
-    end
-
+    return data
 end
 
 
 -- ============================================================
--- AUDIO PLAYER
+-- PLAY SONG
 -- ============================================================
 
-local function audioPlayer()
+local function playSong(
+    songName,
+    generation
+)
+
+    local data, err =
+        downloadSong(
+            songName
+        )
+
+    if not data then
+
+        drawUI(err)
+
+        playing = false
+
+        return
+    end
+
+    -- Si mientras descargaba se pidió otra canción,
+    -- cancelamos esta reproducción.
+
+    if generation
+        ~= playGeneration
+    then
+
+        return
+    end
+
+    local decoder =
+        require(
+            "cc.audio.dfpwm"
+        ).make_decoder()
+
+
+    local position = 1
+
+    local chunkSize =
+        16 * 1024
+
+
+    while position <= #data do
+
+        if
+            generation
+            ~= playGeneration
+        then
+
+            return
+        end
+
+        if stopRequested then
+
+            return
+        end
+
+        if not playing then
+
+            os.sleep(
+                0.05
+            )
+
+        else
+
+            local chunk =
+                data:sub(
+                    position,
+                    math.min(
+                        position
+                        + chunkSize
+                        - 1,
+                        #data
+                    )
+                )
+
+            local buffer =
+                decoder(
+                    chunk
+                )
+
+
+            local pending = {}
+
+
+            for _, speaker
+                in ipairs(speakers)
+            do
+
+                if not speaker.playAudio(
+                    buffer,
+                    volume
+                )
+                then
+
+                    pending[
+                        peripheral.getName(
+                            speaker
+                        )
+                    ] =
+                        speaker
+                end
+            end
+
+
+            while next(pending) do
+
+                if
+                    generation
+                    ~= playGeneration
+                    or stopRequested
+                then
+
+                    stopSpeakers()
+
+                    return
+                end
+
+
+                local event,
+                    name =
+                    os.pullEvent()
+
+
+                if
+                    event
+                    == "speaker_audio_empty"
+                then
+
+                    local speaker =
+                        pending[name]
+
+                    if speaker
+                        and speaker.playAudio(
+                            buffer,
+                            volume
+                        )
+                    then
+
+                        pending[name] =
+                            nil
+                    end
+                end
+            end
+
+
+            position =
+                position
+                + #chunk
+        end
+    end
+
+
+    -- ========================================================
+    -- SONG FINISHED
+    -- ========================================================
+
+    if generation
+        == playGeneration
+        and not stopRequested
+    then
+
+        playing = false
+        paused = false
+
+        drawUI(
+            "FINISHED"
+        )
+
+    end
+end
+
+
+-- ============================================================
+-- PLAYBACK MANAGER
+-- ============================================================
+
+local function playbackLoop()
 
     while true do
 
-        if stopRequested then
+        if playRequest then
+
+            local request =
+                playRequest
+
+            playRequest =
+                nil
 
             stopRequested =
                 false
 
-            clearAudio()
-
             playing =
-                false
+                true
 
             paused =
                 false
 
+            currentSong =
+                request.song
 
             drawUI(
-                "STOP"
+                "DOWNLOADING..."
             )
 
-        elseif #audioQueue > 0
-            and playing
-        then
-
-            local packet =
-                table.remove(
-                    audioQueue,
-                    1
-                )
-
-
-            if packet then
-
-                playBuffer(
-                    packet.data,
-                    packet.volume
-                    or volume
-                )
-
-
-                rednet.send(
-
-                    centralId,
-
-                    {
-                        type =
-                            "AUDIO_ACK",
-
-                        sequence =
-                            packet.sequence,
-
-                        zone =
-                            zoneName
-                    },
-
-                    PROTOCOL
-
-                )
-
-            end
+            playSong(
+                request.song,
+                request.generation
+            )
 
         else
 
             os.sleep(
-                0.01
+                0.05
             )
-
         end
-
     end
-
 end
 
 
@@ -622,9 +565,6 @@ end
 
 local function networkLoop()
 
-    sendHello()
-
-
     while true do
 
         local sender,
@@ -633,17 +573,18 @@ local function networkLoop()
                 PROTOCOL
             )
 
-
-        if sender
+        if
+            sender
             and type(message)
             == "table"
         then
 
             -- ==================================================
-            -- CENTRAL HELLO
+            -- CENTRAL
             -- ==================================================
 
-            if message.type
+            if
+                message.type
                 == "CENTRAL_HELLO"
             then
 
@@ -652,7 +593,6 @@ local function networkLoop()
 
                 connected =
                     true
-
 
                 rednet.send(
 
@@ -665,17 +605,12 @@ local function networkLoop()
                         zone =
                             zoneName,
 
-                        computerId =
-                            os.getComputerID(),
-
                         speakers =
                             #speakers
                     },
 
                     PROTOCOL
-
                 )
-
 
                 drawUI(
                     "CONNECTED"
@@ -686,7 +621,8 @@ local function networkLoop()
             -- PING
             -- ==================================================
 
-            elseif message.type
+            elseif
+                message.type
                 == "PING"
             then
 
@@ -695,7 +631,6 @@ local function networkLoop()
 
                 connected =
                     true
-
 
                 rednet.send(
 
@@ -708,15 +643,11 @@ local function networkLoop()
                         zone =
                             zoneName,
 
-                        computerId =
-                            os.getComputerID(),
-
                         speakers =
                             #speakers
                     },
 
                     PROTOCOL
-
                 )
 
 
@@ -724,7 +655,8 @@ local function networkLoop()
             -- PLAY
             -- ==================================================
 
-            elseif message.type
+            elseif
+                message.type
                 == "PLAY"
             then
 
@@ -734,39 +666,54 @@ local function networkLoop()
                 connected =
                     true
 
-                playing =
-                    true
-
-                paused =
-                    false
-
 
                 if message.song then
+
+                    playGeneration =
+                        playGeneration
+                        + 1
+
+                    stopRequested =
+                        true
+
+                    stopSpeakers()
 
                     currentSong =
                         message.song
 
-                end
-
-
-                if message.volume then
-
                     volume =
                         message.volume
+                        or volume
 
+
+                    playRequest =
+                        {
+                            song =
+                                message.song,
+
+                            generation =
+                                playGeneration
+                        }
+
+                    playing =
+                        true
+
+                    paused =
+                        false
+
+
+                    drawUI(
+                        "LOADING..."
+                    )
                 end
-
-
-                drawUI(
-                    "PLAY"
-                )
 
 
             -- ==================================================
             -- PAUSE
             -- ==================================================
 
-            elseif message.type
+            elseif
+                message.type
                 == "PAUSE"
             then
 
@@ -775,7 +722,6 @@ local function networkLoop()
 
                 paused =
                     true
-
 
                 drawUI(
                     "PAUSED"
@@ -786,12 +732,20 @@ local function networkLoop()
             -- STOP
             -- ==================================================
 
-            elseif message.type
+            elseif
+                message.type
                 == "STOP"
             then
 
+                playGeneration =
+                    playGeneration
+                    + 1
+
                 stopRequested =
                     true
+
+                playRequest =
+                    nil
 
                 playing =
                     false
@@ -799,12 +753,10 @@ local function networkLoop()
                 paused =
                     false
 
-                audioQueue =
-                    {}
-
+                stopSpeakers()
 
                 drawUI(
-                    "STOP"
+                    "STOPPED"
                 )
 
 
@@ -812,124 +764,32 @@ local function networkLoop()
             -- VOLUME
             -- ==================================================
 
-            elseif message.type
+            elseif
+                message.type
                 == "VOLUME"
             then
 
-                if message.volume then
-
-                    volume =
-                        math.max(
-                            0,
-                            math.min(
-                                1,
-                                message.volume
-                            )
+                volume =
+                    math.max(
+                        0,
+                        math.min(
+                            1,
+                            message.volume
+                            or volume
                         )
-
-                end
-
+                    )
 
                 drawUI(
                     "VOLUME"
                 )
-
-
-            -- ==================================================
-            -- AUDIO
-            -- ==================================================
-
-            elseif message.type
-                == "AUDIO"
-            then
-
-                centralId =
-                    sender
-
-                connected =
-                    true
-
-
-                if message.song then
-
-                    if currentSong
-                        ~= message.song
-                    then
-
-                        currentSong =
-                            message.song
-
-                        clearAudio()
-
-                    end
-
-                end
-
-
-                -- =================================================
-                -- Detectar perdida de paquetes
-                -- =================================================
-
-                if message.sequence
-                    and message.sequence
-                    >= expectedSequence
-                then
-
-                    table.insert(
-                        audioQueue,
-                        {
-                            data =
-                                message.data,
-
-                            sequence =
-                                message.sequence,
-
-                            volume =
-                                message.volume
-                                or volume
-                        }
-                    )
-
-
-                    expectedSequence =
-                        message.sequence
-                        + 1
-
-
-                    playing =
-                        true
-
-                    paused =
-                        false
-
-                end
-
-
-            -- ==================================================
-            -- AUDIO END
-            -- ==================================================
-
-            elseif message.type
-                == "AUDIO_END"
-            then
-
-                -- The last queued audio will finish naturally.
-
-                currentSong =
-                    message.song
-
-
             end
-
         end
-
     end
-
 end
 
 
 -- ============================================================
--- CONNECTION WATCHDOG
+-- CONNECTION
 -- ============================================================
 
 local function connectionLoop()
@@ -949,30 +809,34 @@ local function connectionLoop()
                     zone =
                         zoneName,
 
-                    computerId =
-                        os.getComputerID(),
+                    speakers =
+                        #speakers
+                },
+
+                PROTOCOL
+            )
+
+        else
+
+            rednet.broadcast(
+
+                {
+                    type =
+                        "HELLO",
+
+                    zone =
+                        zoneName,
 
                     speakers =
                         #speakers
                 },
 
                 PROTOCOL
-
             )
-
-        else
-
-            sendHello()
-
         end
 
-
-        os.sleep(
-            5
-        )
-
+        os.sleep(5)
     end
-
 end
 
 
@@ -984,13 +848,10 @@ drawUI(
     "STARTING"
 )
 
-
 parallel.waitForAny(
 
     networkLoop,
-
-    audioPlayer,
-
+    playbackLoop,
     connectionLoop
 
 )
